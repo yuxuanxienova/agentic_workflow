@@ -195,7 +195,19 @@ def cmd_send(args) -> int:
         print(f"✓ 已发送 #{entry['seq']} {message_type} {args.sender}→{args.recipient}（投递收件箱 + 事件流）")
     else:
         print(f"✓ 已广播 #{entry['seq']} {message_type} {args.sender}→*（总日志；所有人 read 时可见）")
+    wake_recipients(args.root, args.recipient, args.sender)
     return 0
+
+
+def wake_recipients(root: Path, recipient: str, sender: str) -> None:
+    """收件人若登记在 bus_wake 映射里（Codex daemon 会话），后台等它空闲后叫醒；失败不影响发送。"""
+    if not (bus_dir(root) / "wake_map.json").is_file():
+        return
+    try:
+        from bus_wake import spawn_await
+        spawn_await(root, recipient, sender)
+    except Exception as exc:  # noqa: BLE001  唤醒是增强，不能让 send 失败
+        print(f"（唤醒钩子未生效：{exc}）", file=sys.stderr)
 
 
 def cmd_read(args) -> int:

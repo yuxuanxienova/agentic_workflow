@@ -104,6 +104,21 @@ python3 tools/bus.py tail --n 20
 
 退出码：`0` 成功；`2` 非法消息类型。
 
+### 4b. `bus_wake.py` — 总线唤醒器（Codex）
+
+收件箱有新消息且会话空闲时，经本机共享 app-server daemon 给 Codex 会话注入一轮「去读收件箱」，
+ChatGPT App 里实时可见。只对 App「SSH 远程项目（codex-local）」下的会话有效；配置与坑见
+`doc/setup_codex.html`。映射/状态/日志落 `bus/wake_*`，本机私有。
+
+```bash
+python3 tools/bus_wake.py spawn --agent codex-art-1 --name "负责 plan3 的 art1 车道 · daemon" --text "..."
+python3 tools/bus_wake.py map --agent codex-art-1 --thread "<会话名或 UUID>"
+python3 tools/bus_wake.py list
+python3 tools/bus_wake.py watch [--interval 20] [--direct-only]
+```
+
+退出码：`0` 成功；`2` 用法/连接错误；`3` 会话忙已跳过。
+
 ### 5. `validate_domains.py` — 功能域树校验
 
 校验功能域树 JSON（`templates/` 与 `examples/` 共用同一结构）。规则：`version` 存在；`id` 全局

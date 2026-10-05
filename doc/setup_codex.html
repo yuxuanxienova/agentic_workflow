@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex 车道自动唤醒</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111c2e; --panel2:#16233a; --line:#24354f;
+    --text:#dbe7f5; --muted:#8fa6c0; --accent:#6bccff; --accent2:#6bffb8;
+    --warn:#ffb86b; --danger:#ff7a85; --purple:#b39dff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       line-height:1.75;font-size:15.5px;-webkit-font-smoothing:antialiased}
+  .wrap{display:grid;grid-template-columns:262px minmax(0,1fr);max-width:1420px;margin:0 auto}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+      padding:28px 18px;border-right:1px solid var(--line);background:#0a111d}
+  nav .brand{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:.4px;margin-bottom:4px}
+  nav .brand small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;letter-spacing:0}
+  nav ol{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
+  nav ol li{counter-increment:s;margin:2px 0}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;display:block;padding:5px 9px;border-radius:7px;transition:.15s}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  nav a::before{content:counter(s) ". ";color:#4d6b8a;font-family:var(--mono);font-size:11px}
+  main{padding:44px 52px 120px;min-width:0}
+  h1{font-size:31px;line-height:1.32;margin:0 0 8px;letter-spacing:-.4px}
+  .lede{color:var(--muted);font-size:16px;margin:0 0 8px}
+  .meta{color:#5d7794;font-size:12.5px;font-family:var(--mono);margin-bottom:34px}
+  h2{font-size:23px;margin:60px 0 14px;padding-top:14px;border-top:1px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:17px;margin:32px 0 10px;color:#eaf3ff}
+  p{margin:10px 0}
+  a{color:var(--accent)}
+  code{font-family:var(--mono);font-size:12.8px;background:#0a1526;border:1px solid var(--line);
+       border-radius:5px;padding:1.5px 6px;color:#a8dcff;overflow-wrap:anywhere}
+  pre{background:#0a1526;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:#c7ddf2;font-size:12.8px;line-height:1.65}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  strong{color:#f0f7ff}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.3px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cfe4fb;font-weight:600;font-size:12.8px;white-space:nowrap}
+  tr:nth-child(even) td{background:#0e1828}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1.5px 7px;border-radius:5px;
+       border:1px solid var(--line);background:#0a1526;color:var(--muted);white-space:nowrap}
+  .tag.ok{color:var(--accent2);border-color:#2a5a45}
+  .tag.no{color:var(--danger);border-color:#5a2a31}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:3px solid var(--accent);
+             background:#0e1a2b;border-radius:0 10px 10px 0;color:#c3d8ee}
+  blockquote.warn{border-left-color:var(--warn);background:#1d1a12}
+  blockquote.danger{border-left-color:var(--danger);background:#1f1416}
+  .fig{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .fig svg{display:block;width:100%;height:auto}
+  .fig figcaption{color:var(--muted);font-size:12.5px;text-align:center;margin-top:10px}
+  .src{font-size:12.6px;color:var(--muted)}
+  .foot{color:#5d7794;font-size:12.5px;text-align:center;margin-top:60px}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+    nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    main{padding:28px 16px 80px}
+    .tblwrap{overflow-x:auto}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">Codex 车道自动唤醒<small>App 照常用 · 总线来消息自动叫醒 · 2026-10-05</small></div>
+  <ol>
+    <li><a href="#s0">问题：等待中的 Codex 叫不醒</a></li>
+    <li><a href="#s1">原理：两个后端，只有一个能共享</a></li>
+    <li><a href="#s2">一次性配置</a></li>
+    <li><a href="#s3">开车道会话</a></li>
+    <li><a href="#s4">唤醒的三条路径</a></li>
+    <li><a href="#s4c">Claude Code 车道</a></li>
+    <li><a href="#s5">踩过的坑</a></li>
+    <li><a href="#s6">排错速查</a></li>
+    <li><a href="#s7">来源</a></li>
+  </ol>
+</nav>
+
+<main>
+<h1>Codex 车道自动唤醒</h1>
+<p class="lede">车道 agent 结束一轮去等前置或 ACCEPT 后就不再运行，总线收件箱里来了新消息它也不会知道。本页说明怎么让 ChatGPT App 里的 Codex 会话在收件箱来消息时被自动叫醒，而且你在 App 里能实时看到它接着干活。</p>
+<div class="meta">工具：agentic_workflow/tools/bus_wake.py · 实测环境 codex-cli 0.160.0 / ChatGPT App 154.0 / macOS · 2026-10-05</div>
+
+<h2 id="s0">问题：等待中的 Codex 叫不醒</h2>
+<p>ChatGPT/Codex 的会话是按轮驱动的。一轮结束后后台没有任何进程，也没有人去轮询 <code>.agentic/bus/</code>。别的 agent 用 <code>bus.py send</code> 发来的消息只是往文件里追加了一行。Claude Code 的 <code>SendMessage</code> 也到不了 Codex。所以过去「等 ACCEPT / 等同步点」时，只能由人去 App 里戳它一句。</p>
+<p>官方暂时没有原生的唤醒机制，相关需求见 <a href="https://github.com/openai/codex/issues/46120">#46120</a>、<a href="https://github.com/openai/codex/issues/32188">#32188</a>，都还开着。本方案只用官方现有功能拼出来，<strong>不改 App</strong>。</p>
+
+<h2 id="s1">原理：两个后端，只有一个能共享</h2>
+<div class="fig">
+<svg viewBox="0 0 860 300" role="img" aria-label="App 本地项目走私有 app-server，codex-local 远程项目走共享 daemon，bus_wake 也连共享 daemon">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#8fa6c0"/></marker></defs>
+  <g font-family="-apple-system,PingFang SC,sans-serif" font-size="13">
+    <rect x="20" y="30" width="200" height="240" rx="12" fill="#111c2e" stroke="#24354f"/>
+    <text x="120" y="56" fill="#6bccff" text-anchor="middle" font-weight="700">ChatGPT App</text>
+    <rect x="40" y="80" width="160" height="60" rx="8" fill="#16233a" stroke="#5a2a31"/>
+    <text x="120" y="104" fill="#dbe7f5" text-anchor="middle">本地项目</text>
+    <text x="120" y="124" fill="#ff7a85" text-anchor="middle" font-size="11.5">旧 art1/2/3 会话</text>
+    <rect x="40" y="180" width="160" height="60" rx="8" fill="#16233a" stroke="#2a5a45"/>
+    <text x="120" y="204" fill="#dbe7f5" text-anchor="middle">SSH 远程项目</text>
+    <text x="120" y="224" fill="#6bffb8" text-anchor="middle" font-size="11.5">主机 codex-local</text>
+    <rect x="300" y="80" width="200" height="60" rx="8" fill="#1f1416" stroke="#5a2a31"/>
+    <text x="400" y="104" fill="#dbe7f5" text-anchor="middle">App 私有 app-server</text>
+    <text x="400" y="124" fill="#8fa6c0" text-anchor="middle" font-size="11.5">stdio 管道 · 外部进不来</text>
+    <rect x="300" y="180" width="200" height="60" rx="8" fill="#0e1a2b" stroke="#2a5a45"/>
+    <text x="400" y="204" fill="#dbe7f5" text-anchor="middle">共享 app-server daemon</text>
+    <text x="400" y="224" fill="#8fa6c0" text-anchor="middle" font-size="11.5">unix socket · 多客户端</text>
+    <rect x="620" y="180" width="220" height="60" rx="8" fill="#111c2e" stroke="#24354f"/>
+    <text x="730" y="204" fill="#6bccff" text-anchor="middle" font-weight="700">bus_wake.py watch</text>
+    <text x="730" y="224" fill="#8fa6c0" text-anchor="middle" font-size="11.5">盯 .agentic/bus 收件箱</text>
+    <line x1="200" y1="110" x2="296" y2="110" stroke="#8fa6c0" marker-end="url(#a)"/>
+    <line x1="200" y1="210" x2="296" y2="210" stroke="#8fa6c0" marker-end="url(#a)"/>
+    <text x="248" y="200" fill="#8fa6c0" text-anchor="middle" font-size="11">ssh + proxy</text>
+    <line x1="616" y1="210" x2="504" y2="210" stroke="#6bffb8" marker-end="url(#a)"/>
+    <text x="560" y="200" fill="#6bffb8" text-anchor="middle" font-size="11">turn/start</text>
+    <line x1="616" y1="190" x2="504" y2="118" stroke="#ff7a85" stroke-dasharray="5 4"/>
+    <text x="590" y="140" fill="#ff7a85" text-anchor="middle" font-size="11">✕ active writer</text>
+  </g>
+</svg>
+<figcaption>只有放在共享 daemon 里的会话能被第二个客户端注入新的一轮，而且 App 会实时显示。</figcaption>
+</div>
+<ul>
+  <li>App 的<strong>本地项目</strong>由 App 自带的私有 <code>codex app-server --listen stdio://</code> 托管。会话一打开，它就持有写锁（<code>~/.codex/thread-writer-locks/&lt;id&gt;.lock</code>）。从外面执行 <code>codex exec resume</code> 或连 daemon 都会报 <code>already has an active writer</code>。</li>
+  <li>App 的 <strong>SSH 远程项目</strong>会在目标机上执行 <code>codex app-server proxy</code>，接到那台机器的<strong>共享 daemon</strong>（<code>~/.codex/app-server-control/app-server-control.sock</code>）。把目标机设成本机 <code>codex-local</code>，会话就放进了本机 daemon。</li>
+  <li>daemon 支持多客户端。<code>bus_wake.py</code> 作为第二个客户端对同一个会话发 <code>thread/resume</code> 和 <code>turn/start</code>，App 这边会实时出现这一轮。</li>
+  <li>会话历史两边共享，都在 <code>~/.codex/sessions</code>。客户端断开后，这一轮仍在 daemon 里继续跑。</li>
+</ul>
+
+<h2 id="s2">一次性配置</h2>
+<h3>① 本机免密 SSH 到自己</h3>
+<pre><code># macOS「系统设置 → 通用 → 共享 → 远程登录」需开启（nc -z localhost 22 能通即可）
+cd ~/.ssh
+cp authorized_keys authorized_keys.bak-$(date +%Y%m%d)
+# from= 限制这条授权只对本机来源生效，外部机器拿同一把 key 登不进来
+printf 'from="127.0.0.1,::1" %s\n' "$(cat id_ed25519.pub)" &gt;&gt; authorized_keys
+cat &gt;&gt; config &lt;&lt;'EOF'
+
+Host codex-local
+  HostName localhost
+  User &lt;你的用户名&gt;
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+EOF
+chmod 600 authorized_keys config
+ssh -o StrictHostKeyChecking=accept-new codex-local 'echo ssh-ok'</code></pre>
+<h3>② 确认共享 daemon 在跑</h3>
+<pre><code>ssh codex-local '~/.codex/packages/standalone/current/codex app-server daemon version'
+# 期望 {"status":"running", ... "socketPath":".../app-server-control.sock"}
+# 没在跑：codex app-server daemon start</code></pre>
+<h3>③ App 里添加远程项目</h3>
+<p>在 ChatGPT App 的 Codex 里添加 SSH 远程项目，主机选 <code>codex-local</code>，路径选仓库根目录。侧栏项目名旁出现 <span class="tag ok">codex-local ●</span> 绿点，就说明已经连上。</p>
+
+<h2 id="s3">开车道会话</h2>
+<p>车道会话必须开在 codex-local 项目下。有两种开法，效果相同：</p>
+<pre><code># 推荐：命令行开，自动命名并登记映射；会话会出现在 App 的 codex-local 项目下
+python3 agentic_workflow/tools/bus_wake.py spawn --agent codex-art-1 \
+  --name "负责 plan3 的 art1 车道 · daemon" --text "你是 plan3 ART1 车道（codex-art-1）……"
+
+# 或在 App 的 codex-local 项目里手动新开会话，聊一句让它落盘，再登记：
+python3 agentic_workflow/tools/bus_wake.py map --agent codex-art-1 --thread "&lt;会话名或 UUID&gt;"
+
+python3 agentic_workflow/tools/bus_wake.py list   # 查看映射与 idle/active 状态</code></pre>
+<blockquote class="warn"><strong>旧会话迁移：</strong>本地项目里的旧会话迁不进 daemon，只能开新会话来接手。接手前先确认旧会话已经停下（这一轮结束了，或者在 App 里关掉），否则两个会话会同时冒用同一个 agent ID 认领任务、改文件。新会话第一轮只做接班准备：读规矩、读收件箱时不加 <code>--unread</code>，不 claim。</blockquote>
+
+<h2 id="s4">唤醒的三条路径</h2>
+<p>一套设施覆盖所有 plan：总线全局只有一份，映射按 agent ID 登记，跟 plan 无关。三条路径共用 <code>try_wake()</code>：在同一把锁 <code>.wake.lock</code> 里判断、唤醒并记录已唤醒到的 seq。所以<strong>同一批消息只会叫醒一次</strong>，三条路径同时开着也不会重复。</p>
+<div class="tblwrap"><table>
+<tr><th>路径</th><th>触发</th><th>说明</th></tr>
+<tr><td><strong>A 发送即唤醒</strong>（主）</td><td><code>bus.py send</code> 写完消息后自动触发</td><td>收件人在映射里，就起一个脱离的 <code>bus_wake.py await</code>；广播则对除发送者外所有已登记的 agent 都起一个。对方 active 时每 30 秒重查一次，空闲了立刻叫醒，最多等 2 小时。发送方不用做任何事</td></tr>
+<tr><td><strong>B launchd watch</strong>（兜底）</td><td>登录即启动，60 秒轮询</td><td>补漏：比如 A 等超时、daemon 当时没在跑、有人没用 bus.py 而是直接改了文件。plist 在 <code>~/Library/LaunchAgents/com.endlessspace.bus-wake.plist</code></td></tr>
+<tr><td>手动</td><td><code>bus_wake.py wake --agent X --text "…"</code></td><td>调试，或者临时下指令</td></tr>
+</table></div>
+<pre><code>launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.endlessspace.bus-wake.plist   # 启用
+launchctl bootout   gui/$(id -u)/com.endlessspace.bus-wake                                 # 停用
+tail -f .agentic/bus/wake_logs/watch.out</code></pre>
+<blockquote class="danger"><strong>macOS 隐私限制（坑 11）：</strong>仓库在 <code>~/Desktop</code> 下。launchd 启动的 <code>/usr/bin/python3</code> 没有访问 Desktop 的权限，会报 <code>Operation not permitted</code>。需要在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」里加上 <code>/usr/bin/python3</code>（也可以加 Xcode 那份 python3），然后重新 bootstrap。A 路径是在 agent 的 shell 里运行的，不受这个限制影响。</blockquote>
+<blockquote class="warn"><strong>切换车道时：</strong>新会话一旦登记映射，A 和 B 就会开始叫醒它。所以要先确认旧会话已经停下，再 <code>map</code>；要暂停某个 agent，就 <code>unmap</code>。</blockquote>
+<p><code>wake_map.json</code>、<code>wake_state.json</code>、<code>wake_logs/</code> 都是本机私有（thread ID 只在这台机器上有效），<strong>不要提交</strong>。</p>
+
+<h2 id="s4c">Claude Code 车道</h2>
+<p><strong>完整配置与坑见 <a href="setup_claude.html">setup_claude.html</a>。</strong>以下是摘要。</p>
+<p>Claude Code 本身就支持这件事。每个会话（包括 VS Code 里的）都有一个收件箱 socket <code>/tmp/cc-socks/&lt;pid&gt;.sock</code>，<strong>会话空闲时收到消息会自动开新一轮</strong>，正在忙时则在两次工具调用之间读到。这部分 <code>bus_wake.py</code> 已经接好，<strong>不需要登记映射</strong>：</p>
+<ul>
+  <li><strong>自动发现：</strong>扫描 <code>~/.claude/sessions/*.json</code>，挑出进程还活着、工作目录在本仓库的会话；再到对话记录里统计 <code>--agent/--from</code> 用得最多的 <code>claude-*</code> ID，作为它的 agent ID（同一个 ID 有多个会话时取最近活跃的那个）。<code>bus_wake.py list</code> 可以查看。</li>
+  <li><strong>投递格式：</strong>往 socket 写一行 <code>{"type":"user","message":{"role":"user","content":"…"}}</code>。</li>
+  <li><strong>必要设置：</strong>用户级 <code>~/.claude/settings.json</code> 里要有 <code>"crossSessionInbound": "accept"</code>。</li>
+</ul>
+<blockquote class="danger"><strong>坑 12：</strong>车道会话通常开着「绕过权限确认」。按默认规则，没声明权限模式的发送方发来的消息会被<strong>挂起</strong>，VS Code 又弹不出批准框，过期后就被丢掉。<strong>写在项目或 local 级设置里的 <code>accept</code> 不生效</strong>：仓库级设置只能收紧、不能放宽（从 2.1.289 的程序代码确认，文档没写明）。必须写在用户级设置里，而且对你所有项目的会话都生效。改完后，正在运行的会话会立即生效，此前被挂起的消息也会一并放行。</blockquote>
+<p>实测（2026-10-05）：协调人 <code>bus.py send</code> → 规划会话被自动叫醒 → 它 <code>bus.py send</code> 回复 → 协调人被自动叫醒并读到回复。全程无人工。第一次接入前，先把所有 Claude 车道在 <code>wake_state.json</code> 里记到当前最新的 seq，否则 watch 会拿积压的旧消息把十几个会话一起叫醒。</p>
+
+<h2 id="s5">踩过的坑</h2>
+<div class="tblwrap"><table>
+<tr><th>#</th><th>现象</th><th>原因 / 结论</th></tr>
+<tr><td>1</td><td><code>codex exec resume &lt;App 会话&gt;</code> 报 <code>thread-store conflict … already has an active writer</code></td><td>App 本地项目的会话被 App 私有 app-server 持着写锁。exec 方案只在会话没被任何客户端打开时才能用</td></tr>
+<tr><td>2</td><td><code>codex app-server proxy</code> 收到 initialize 后没有任何回应，脚本卡住</td><td>proxy 在这个环境下不能直接拿来当 stdio JSON-RPC 用（输出了 control socket 已被占用之类的错误）。改成直连 unix socket</td></tr>
+<tr><td>3</td><td>往 control socket 写一行 JSON-RPC，连接立刻被关</td><td>socket 走的是 <strong>WebSocket</strong>，要先做 HTTP Upgrade 握手，客户端帧还必须加掩码。<code>bus_wake.py</code> 里自带一个最小实现，不依赖第三方库</td></tr>
+<tr><td>4</td><td>连上共享 daemon 后，resume App 本地会话仍然报 active writer</td><td>共享 daemon 和 App 私有 app-server 是两个进程，App 本地项目并没有连 daemon。这就是必须用 codex-local 远程项目的原因</td></tr>
+<tr><td>5</td><td>新建会话后马上从另一个客户端 resume，报 <code>no rollout found</code></td><td>会话要跑完第一轮才会写盘。<code>spawn</code> 会在创建后立刻发首轮</td></tr>
+<tr><td>6</td><td><code>ssh localhost</code> 报 Permission denied</td><td>自己的公钥不在 <code>authorized_keys</code> 里。按 ② 追加，并加 <code>from=</code> 限制来源</td></tr>
+<tr><td>7</td><td>SSH 进来后 PATH 里找不到 <code>codex</code></td><td>非交互 shell 不读 <code>.zshrc</code>。App 会用 <code>~/.codex/packages/standalone/current/codex</code>，一般不受影响；如果 App 报找不到 codex，在 <code>~/.zshenv</code> 里补 PATH</td></tr>
+<tr><td>8</td><td>唤醒的那一轮卡住不动</td><td>会话在等审批或用户输入。审批请求发给了发起这一轮的客户端，也就是 bus_wake，它不会处理，只会在日志里打 ⚠。把车道会话的审批策略设成不需要人工审批，或者去 App 里处理</td></tr>
+<tr><td>9</td><td>（社区已知）App 的 SSH 代理有时自己另起 app-server，不连共享 daemon</td><td>见 <a href="https://github.com/openai/codex/issues/24542">#24542</a>。现象和坑 4 一样，报 active writer。处理办法：<code>codex app-server daemon restart</code> 后重连远程项目</td></tr>
+<tr><td>10</td><td>文档、浏览器等界面看不到</td><td>不是问题。会话就在 App 里，图片、diff 照常显示，「CLI 看东西麻烦」的问题不存在</td></tr>
+</table></div>
+
+<h2 id="s6">排错速查</h2>
+<pre><code>python3 agentic_workflow/tools/bus_wake.py list                   # 映射与状态；报错说明 daemon 没连上
+ls ~/.codex/thread-writer-locks/                                  # 被持锁的会话
+codex app-server daemon version                                   # daemon 是否在跑、版本是否与 CLI 一致
+ps aux | grep 'codex app-server'                                  # 区分 App 私有（--listen stdio://）与 daemon
+tail -f .agentic/bus/wake_logs/codex-art-1.log                    # 某次唤醒的结果</code></pre>
+
+<h2 id="s7">来源</h2>
+<ul class="src">
+  <li><a href="https://github.com/openai/codex/blob/main/codex-rs/app-server-daemon/README.md">openai/codex · app-server-daemon README</a>：daemon、control socket、多客户端共享</li>
+  <li><a href="https://learn.chatgpt.com/docs/app-server">Codex App Server 文档</a>：协议（thread/resume、turn/start）</li>
+  <li><a href="https://github.com/openai/codex/issues/45386">#45386 GUI Remote</a>、<a href="https://github.com/openai/codex/issues/24542">#24542</a>、<a href="https://github.com/openai/codex/issues/23699">#23699</a>：桌面端 SSH 远程与 daemon 的已知问题</li>
+  <li><a href="https://github.com/openai/codex/issues/46120">#46120</a>、<a href="https://github.com/openai/codex/issues/32188">#32188</a>：官方唤醒需求（未实现）</li>
+  <li><a href="https://github.com/RainyPixel/open-wake">RainyPixel/open-wake</a>：纯 CLI 场景的替代方案（Stop hook）</li>
+  <li>协议 schema：<code>codex app-server generate-json-schema --out &lt;dir&gt;</code></li>
+</ul>
+<div class="foot">EndlessSpace · agentic_workflow · 2026-10-05 实测</div>
+</main>
+</div>
+</body>
+</html>

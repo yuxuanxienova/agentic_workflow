@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude 车道自动唤醒</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111c2e; --panel2:#16233a; --line:#24354f;
+    --text:#dbe7f5; --muted:#8fa6c0; --accent:#6bccff; --accent2:#6bffb8;
+    --warn:#ffb86b; --danger:#ff7a85; --purple:#b39dff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       line-height:1.75;font-size:15.5px;-webkit-font-smoothing:antialiased}
+  .wrap{display:grid;grid-template-columns:262px minmax(0,1fr);max-width:1420px;margin:0 auto}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+      padding:28px 18px;border-right:1px solid var(--line);background:#0a111d}
+  nav .brand{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:.4px;margin-bottom:4px}
+  nav .brand small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;letter-spacing:0}
+  nav ol{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
+  nav ol li{counter-increment:s;margin:2px 0}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;display:block;padding:5px 9px;border-radius:7px;transition:.15s}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  nav a::before{content:counter(s) ". ";color:#4d6b8a;font-family:var(--mono);font-size:11px}
+  main{padding:44px 52px 120px;min-width:0}
+  h1{font-size:31px;line-height:1.32;margin:0 0 8px;letter-spacing:-.4px}
+  .lede{color:var(--muted);font-size:16px;margin:0 0 8px}
+  .meta{color:#5d7794;font-size:12.5px;font-family:var(--mono);margin-bottom:34px}
+  h2{font-size:23px;margin:60px 0 14px;padding-top:14px;border-top:1px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:17px;margin:32px 0 10px;color:#eaf3ff}
+  p{margin:10px 0}
+  a{color:var(--accent)}
+  code{font-family:var(--mono);font-size:12.8px;background:#0a1526;border:1px solid var(--line);
+       border-radius:5px;padding:1.5px 6px;color:#a8dcff;overflow-wrap:anywhere}
+  pre{background:#0a1526;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:#c7ddf2;font-size:12.8px;line-height:1.65}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  strong{color:#f0f7ff}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.3px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cfe4fb;font-weight:600;font-size:12.8px;white-space:nowrap}
+  tr:nth-child(even) td{background:#0e1828}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1.5px 7px;border-radius:5px;
+       border:1px solid var(--line);background:#0a1526;color:var(--muted);white-space:nowrap}
+  .tag.ok{color:var(--accent2);border-color:#2a5a45}
+  .tag.no{color:var(--danger);border-color:#5a2a31}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:3px solid var(--accent);
+             background:#0e1a2b;border-radius:0 10px 10px 0;color:#c3d8ee}
+  blockquote.warn{border-left-color:var(--warn);background:#1d1a12}
+  blockquote.danger{border-left-color:var(--danger);background:#1f1416}
+  .fig{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .fig svg{display:block;width:100%;height:auto}
+  .fig figcaption{color:var(--muted);font-size:12.5px;text-align:center;margin-top:10px}
+  .src{font-size:12.6px;color:var(--muted)}
+  .foot{color:#5d7794;font-size:12.5px;text-align:center;margin-top:60px}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+    nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    main{padding:28px 16px 80px}
+    .tblwrap{overflow-x:auto}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">Claude 车道自动唤醒<small>bus.py send → 对方会话自动开新一轮 · 2026-10-05</small></div>
+  <ol>
+    <li><a href="#s0">问题与结论</a></li>
+    <li><a href="#s1">原理：会话收件箱 socket</a></li>
+    <li><a href="#s2">一次性配置</a></li>
+    <li><a href="#s3">bus_wake 怎么找到并叫醒会话</a></li>
+    <li><a href="#s4">投递规则：送达 / 挂起 / 拒收</a></li>
+    <li><a href="#s5">验证步骤（端到端）</a></li>
+    <li><a href="#s6">踩过的坑</a></li>
+    <li><a href="#s7">排错速查</a></li>
+    <li><a href="#s8">安全边界与撤销</a></li>
+    <li><a href="#s9">来源</a></li>
+  </ol>
+</nav>
+
+<main>
+<h1>Claude 车道自动唤醒</h1>
+<p class="lede">车道 agent 停下来等前置任务或审批时，这一轮就结束了，之后不会自己去读总线收件箱。本页记录怎么让 Claude Code 会话在 <code>bus.py send</code> 发来消息时被自动叫醒，以及调通过程中踩过的所有坑。Codex 车道的做法见 <a href="setup_codex.html">setup_codex.html</a>。两边共用同一个 <code>bus_wake.py</code>。</p>
+<div class="meta">实测环境 Claude Code 2.1.288/2.1.289 · VS Code 扩展 + 后台会话 · macOS · 2026-10-05</div>
+
+<h2 id="s0">问题与结论</h2>
+<div class="tblwrap"><table>
+<tr><th>问题</th><th>结论</th></tr>
+<tr><td>Claude 会话空闲时，能被外部叫醒吗？</td><td><span class="tag ok">能</span> 官方原生支持。每个会话都有一个收件箱 socket，空闲时收到消息会自动开新一轮</td></tr>
+<tr><td>要改 Claude Code 吗？</td><td><span class="tag ok">不用</span> 只需要在<strong>用户级</strong>设置里加一行，再配上 <code>bus_wake.py</code> 的 Claude 后端</td></tr>
+<tr><td>要像 Codex 那样登记映射吗？</td><td><span class="tag ok">不用</span> 会话和 agent ID 都是自动发现的</td></tr>
+<tr><td>在 VS Code 扩展里能用吗？</td><td><span class="tag ok">能</span> 实测 VS Code 会话和 <code>claude --bg</code> 后台会话都可以</td></tr>
+<tr><td>项目级设置能代替吗？</td><td><span class="tag no">不能</span> 见坑 3：仓库级设置只能收紧、不能放宽</td></tr>
+</table></div>
+
+<h2 id="s1">原理：会话收件箱 socket</h2>
+<div class="fig">
+<svg viewBox="0 0 860 250" role="img" aria-label="bus.py send 写消息后由 bus_wake 找到目标会话的 socket 并投递，目标会话空闲则自动开新一轮">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#8fa6c0"/></marker></defs>
+  <g font-family="-apple-system,PingFang SC,sans-serif" font-size="13">
+    <rect x="20" y="40" width="190" height="70" rx="10" fill="#111c2e" stroke="#24354f"/>
+    <text x="115" y="68" fill="#6bccff" text-anchor="middle" font-weight="700">发送方 agent</text>
+    <text x="115" y="90" fill="#8fa6c0" text-anchor="middle" font-size="11.5">bus.py send --to claude-…-t1</text>
+    <rect x="270" y="40" width="200" height="70" rx="10" fill="#111c2e" stroke="#24354f"/>
+    <text x="370" y="68" fill="#dbe7f5" text-anchor="middle">.agentic/bus/</text>
+    <text x="370" y="90" fill="#8fa6c0" text-anchor="middle" font-size="11.5">log.jsonl + inbox/&lt;id&gt;.jsonl</text>
+    <rect x="270" y="150" width="200" height="70" rx="10" fill="#0e1a2b" stroke="#2a5a45"/>
+    <text x="370" y="178" fill="#6bffb8" text-anchor="middle" font-weight="700">bus_wake.py</text>
+    <text x="370" y="200" fill="#8fa6c0" text-anchor="middle" font-size="11.5">发现会话 → 写 socket</text>
+    <rect x="560" y="150" width="280" height="70" rx="10" fill="#111c2e" stroke="#24354f"/>
+    <text x="700" y="178" fill="#dbe7f5" text-anchor="middle">/tmp/cc-socks/&lt;pid&gt;.sock</text>
+    <text x="700" y="200" fill="#8fa6c0" text-anchor="middle" font-size="11.5">目标会话空闲 → 自动开新一轮</text>
+    <rect x="560" y="40" width="280" height="70" rx="10" fill="#111c2e" stroke="#24354f"/>
+    <text x="700" y="68" fill="#dbe7f5" text-anchor="middle">~/.claude/sessions/&lt;pid&gt;.json</text>
+    <text x="700" y="90" fill="#8fa6c0" text-anchor="middle" font-size="11.5">socket 路径 · 状态 · sessionId</text>
+    <line x1="210" y1="75" x2="266" y2="75" stroke="#8fa6c0" marker-end="url(#a)"/>
+    <line x1="370" y1="110" x2="370" y2="146" stroke="#8fa6c0" marker-end="url(#a)"/>
+    <text x="378" y="132" fill="#8fa6c0" font-size="11">send 钩子</text>
+    <line x1="474" y1="170" x2="600" y2="112" stroke="#8fa6c0" stroke-dasharray="4 4" marker-end="url(#a)"/>
+    <text x="520" y="132" fill="#8fa6c0" font-size="11">读</text>
+    <line x1="474" y1="195" x2="556" y2="195" stroke="#6bffb8" marker-end="url(#a)"/>
+    <text x="515" y="186" fill="#6bffb8" text-anchor="middle" font-size="11">投递</text>
+  </g>
+</svg>
+<figcaption>Codex 走共享 app-server daemon；Claude 走每个会话自己的收件箱 socket。两条路都由同一个 send 钩子触发。</figcaption>
+</div>
+<ul>
+  <li>Claude Code 2.1.224 起，每个会话启动时会绑定一个 unix socket，叫<strong>收件箱 socket</strong>。macOS 上的路径是 <code>/tmp/cc-socks/&lt;pid&gt;.sock</code>，权限 <code>0600</code>，只有你自己的系统用户能连。</li>
+  <li>会话的元数据写在 <code>~/.claude/sessions/&lt;pid&gt;.json</code>，关键字段有 <code>messagingSocketPath</code>、<code>sessionId</code>、<code>cwd</code>、<code>status</code>（idle/busy）、<code>name</code> 和 <code>updatedAt</code>。</li>
+  <li>消息到达时，会话<strong>空闲就自动开新一轮</strong>；会话<strong>正忙就在两次工具调用之间读到</strong>，不会打断正在运行的工具。所以 Claude 这边不用像 Codex 那样等对方空闲。</li>
+  <li>官方的 <code>SendMessage</code> 和 <code>ListAgents</code> 工具走的也是这条通道。<code>bus_wake.py</code> 只是让一个 Python 脚本也能往里写。</li>
+  <li>收到的消息在对话里显示为「Another Claude session sent a message」，Claude 会把它当作队友的请求处理。<strong>这类消息不能批准权限，也不能让对方改配置</strong>，接收方原有的权限规则照常生效。</li>
+</ul>
+
+<h2 id="s2">一次性配置</h2>
+<h3>① 用户级设置：接受本机其他会话发来的消息</h3>
+<pre><code># ~/.claude/settings.json （用户级；项目级 / local 级写了无效，见坑 3）
+{
+  …原有内容…,
+  "crossSessionInbound": "accept"
+}</code></pre>
+<p>改完后<strong>正在运行的会话立即生效</strong>，不需要重启；此前被挂起的消息也会自动放行（实测 #350 就是这样补送到的）。也可以在任意会话里用 <code>/config</code> 的「Messages from your other sessions」这一项来改，效果相同。</p>
+<h3>② bus_wake 的 Claude 后端</h3>
+<p>已经内置在 <code>agentic_workflow/tools/bus_wake.py</code> 里，不需要额外安装。触发路径和 Codex 一样：</p>
+<ul>
+  <li><strong>发送即唤醒：</strong><code>bus.py send</code> 写完消息后调用 <code>spawn_await</code>，对 Claude 收件人直接投递到它的 socket。</li>
+  <li><strong>launchd watch 兜底：</strong><code>com.endlessspace.bus-wake</code> 每 60 秒检查一次，补漏用。</li>
+  <li><strong>手动：</strong><code>python3 agentic_workflow/tools/bus_wake.py wake --agent claude-endlessspace-t1</code>。</li>
+</ul>
+<h3>③ 首次接入前，先给积压消息打基线（重要）</h3>
+<p>多数 Claude 车道从来没跑过 <code>read --unread</code>，游标是 0。如果直接启用，watch 会拿全部历史消息（包括 plan2 时期的旧广播）把十几个会话一起叫醒。所以要先把每个 Claude agent 已唤醒到的位置记成当前最新的 seq：</p>
+<pre><code>cd &lt;仓库根&gt;
+python3 - &lt;&lt;'EOF'
+import sys; sys.path.insert(0, "agentic_workflow/tools")
+import bus_wake as w; from pathlib import Path
+root = Path(".agentic").resolve()
+with w.state_lock(root):
+    st = w.load_json(root/"bus"/w.STATE_NAME)
+    last = max(e.get("seq", 0) for e in w.iter_jsonl(root/"bus"/"log.jsonl"))
+    for a in w.claude_sessions(root.parent): st.setdefault(a, last)
+    w.save_json(root/"bus"/w.STATE_NAME, st)
+EOF
+launchctl kickstart -k gui/$(id -u)/com.endlessspace.bus-wake   # 让 watch 加载新代码</code></pre>
+
+<h2 id="s3">bus_wake 怎么找到并叫醒会话</h2>
+<h3>自动发现（<code>claude_sessions()</code>）</h3>
+<ol>
+  <li>扫描 <code>~/.claude/sessions/*.json</code>，只保留 <code>cwd</code> 在本仓库下、而且 <code>os.kill(pid, 0)</code> 能确认进程还活着的会话。元数据文件在进程退出后可能残留，这一步就是为了过滤掉它们。</li>
+  <li>按 <code>sessionId</code> 找到对话记录 <code>~/.claude/projects/*/&lt;sessionId&gt;.jsonl</code>，用正则 <code>--(agent|from)[ =]+(claude-…)</code> 统计这个会话用得最多的 <code>claude-*</code> ID，作为它的 agent ID。</li>
+  <li>同一个 ID 对应多个会话时（比如旧会话还没关），取 <code>updatedAt</code> 最新的那个。</li>
+  <li><code>wake_map.json</code> 里有显式映射的 ID（Codex）优先，自动发现的结果不会覆盖它。</li>
+</ol>
+<p>会话名（如 <code>endlessspace-22</code>）是 Claude Code 自动起的，和车道 ID 对不上，所以要靠对话记录来推断。实测 U、T1、T2、S、M、B1、B2、I、coord、plan3 全部识别正确。查看结果：</p>
+<pre><code>python3 agentic_workflow/tools/bus_wake.py list
+# codex   codex-art-1          01a10c70-…  active
+# claude  claude-endlessspace-t1  pid 96415  endlessspace-22  busy
+# …</code></pre>
+<h3>投递（<code>post_claude()</code>）</h3>
+<pre><code># 连 socket，写一行 JSON 后关闭（macOS/Linux 上 auth 行可省略）
+{"type":"user","message":{"role":"user","content":"【bus_wake 自动唤醒】你的总线收件箱有新消息（#…）…"}}</code></pre>
+<ul>
+  <li>建立连接后 30 秒内要写完一整行，否则 Claude Code 会断开。所以先把内容准备好再连接。</li>
+  <li>唤醒文本只是让对方「去跑 <code>bus.py read --unread</code>」，<strong>不搬运消息正文</strong>。总线仍然是唯一留痕的地方。</li>
+  <li>和 Codex 共用 <code>.wake.lock</code> 和 <code>wake_state.json</code>，同一批消息只投递一次；日志写到 <code>.agentic/bus/wake_logs/&lt;agent&gt;.log</code>，带「（claude）」标记。</li>
+</ul>
+
+<h2 id="s4">投递规则：送达 / 挂起 / 拒收</h2>
+<p>接收方按自己的 <code>crossSessionInbound</code> 和权限模式来决定怎么处理。下表是从官方文档和 2.1.289 的程序代码里整理出来的：</p>
+<div class="tblwrap"><table>
+<tr><th>情况</th><th>结果</th></tr>
+<tr><td>生效的设置是 <code>accept</code>（用户级 / <code>--settings</code> / 托管设置）</td><td><span class="tag ok">送达</span></td></tr>
+<tr><td>发送方是接收会话<strong>自己的子进程</strong>（hook、Bash 命令）</td><td><span class="tag ok">送达</span>。macOS 上只在发送进程还活着时才能确认，或者要带上该会话的 <code>CLAUDE_CODE_MESSAGING_TOKEN</code></td></tr>
+<tr><td>未设置 + 接收方是普通（需要确认）模式</td><td><span class="tag ok">送达</span></td></tr>
+<tr><td>未设置 + 接收方是<strong>绕过权限确认</strong>模式 + 发送方没声明模式</td><td><span class="tag no">挂起</span> 提示 <code>no-mode-asserted</code>：The sender did not attest its permission mode…</td></tr>
+<tr><td>未设置 + 双方权限模式不同</td><td><span class="tag no">挂起</span> <code>mode-mismatch</code></td></tr>
+<tr><td>挂起的消息在 VS Code、桌面版或 <code>-p</code> 会话里</td><td>弹不出批准框，过了 <code>dialogExpiry</code>（默认 5 分钟）就<strong>丢弃</strong>；如果期间设置改成了 accept，就补投</td></tr>
+<tr><td>设置为 <code>refuse</code></td><td><span class="tag no">拒收</span>，静默丢弃</td></tr>
+</table></div>
+<p>车道会话一般开着「绕过权限确认」，而 bus_wake 是外部脚本、没有声明模式，所以<strong>不加用户级 accept 就一定会被挂起</strong>。</p>
+
+<h2 id="s5">验证步骤（端到端）</h2>
+<ol>
+  <li><code>bus_wake.py list</code>：目标会话出现在 <code>claude</code> 行，ID 正确。</li>
+  <li>选一个不占车道的空闲会话（本次用的是 plan3 规划会话）：
+<pre><code>python3 agentic_workflow/tools/bus.py send --from claude-endlessspace-coord \
+  --to claude-endlessspace-plan3 --type PROPOSE \
+  --body "[bus_wake 测试] 读到后只回复一句『已被 bus_wake 唤醒』，不要做其他事。"</code></pre></li>
+  <li>几秒后 <code>~/.claude/sessions/&lt;pid&gt;.json</code> 里的 <code>status</code> 变成 <code>busy</code>，对话记录里能搜到「bus_wake 自动唤醒」，<code>wake_logs/&lt;agent&gt;.log</code> 里多了「唤醒 #N（claude）」。</li>
+  <li>对方用 <code>bus.py send</code> 回复后，发送方也会被自动叫醒（2026-10-05 实测：#356 → #358，全程无人工）。</li>
+</ol>
+<blockquote>想在不打扰真实车道的情况下测试，可以起一个临时后台会话：<code>claude --bg -n waketest --permission-mode bypassPermissions "只回复 ready"</code>，用 <code>claude logs &lt;id&gt;</code> 看输出（挂起时会显示 Held peer message），测完用 <code>claude stop &lt;id&gt;</code> 关掉。</blockquote>
+
+<h2 id="s6">踩过的坑</h2>
+<div class="tblwrap"><table>
+<tr><th>#</th><th>现象</th><th>原因 / 结论</th></tr>
+<tr><td>1</td><td>往会话 socket 写消息后，对方 <code>status</code> 仍是 idle，对话记录里也没有</td><td>消息被<strong>挂起</strong>，没有送达。对话记录里看不到被挂起的消息，要用 <code>claude logs</code>（后台会话）或者到该会话界面里才能看到「Held peer message」</td></tr>
+<tr><td>2</td><td>脚本往<strong>自己</strong>的 socket 发消息能收到，发给别的会话就收不到</td><td>发给自己时能凭进程关系认出是「自己的子进程」（发送进程还活着），所以免挂起。发给别的会话时没有这层关系</td></tr>
+<tr><td>3</td><td>在项目 <code>.claude/settings.local.json</code> 里写了 <code>"crossSessionInbound":"accept"</code>，新开的会话照样挂起</td><td><strong>仓库级设置（project/local）只能收紧（hold/refuse），不能放宽</strong>，这是为了防止仓库偷偷打开你的收件箱。程序代码里只有当它比现有值更严时才采用。必须写在用户级 <code>~/.claude/settings.json</code>。文档只写了「Any file」，没说明这一点</td></tr>
+<tr><td>4</td><td>想在消息 JSON 里加 <code>"fromMode":"bypass"</code> 来声明权限模式</td><td>无效。<code>fromMode</code> 是从 Claude 内部的消息信封格式里解析出来的，顶层字段会被忽略。去伪造内部协议既不稳也不应该，<strong>不要走这条路</strong></td></tr>
+<tr><td>5</td><td><code>~/.claude/sessions/&lt;pid&gt;.*.key</code> 里的内容和会话的 <code>CLAUDE_CODE_MESSAGING_TOKEN</code> 对不上</td><td>key 文件存的不是原样的 token，外部脚本拿不到别的会话的 token。在 macOS 上 auth 行本来就可以省略，有了用户级 accept 也不需要它</td></tr>
+<tr><td>6</td><td>会话名 <code>endlessspace-22</code> 和车道 ID <code>claude-endlessspace-t1</code> 对不上</td><td>名字是 Claude Code 自动起的。bus_wake 靠对话记录里的 <code>--agent/--from</code> 来推断；也可以在会话里 <code>/rename</code> 成车道名，方便自己辨认</td></tr>
+<tr><td>7</td><td><code>list</code> 里出现 <code>claude-x</code>、<code>claude-endlessspace-5e</code> 这类怪 ID</td><td>这些会话的对话里只出现过示例 ID，或者是混用的 ID。没有人给它们发消息就不会触发，无害；如果要排除，就在那个会话里用正确的 <code>--agent</code> 跑一次 bus 命令</td></tr>
+<tr><td>8</td><td>一启用，watch 就把十几个会话同时叫醒</td><td>积压的旧消息（游标 0）被当成了新消息。首次接入前按 ②③ 打基线</td></tr>
+<tr><td>9</td><td>launchd 的 watch 没有处理 Claude 车道</td><td>常驻进程还跑着旧代码。改了 <code>bus_wake.py</code> 后要 <code>launchctl kickstart -k gui/$(id -u)/com.endlessspace.bus-wake</code></td></tr>
+<tr><td>10</td><td>脚本里用 <code>sleep 30; …</code> 等对方回复，被 Claude Code 拦下</td><td>Claude Code 不允许前台长时间 sleep。改用 Monitor 加 until 循环，或者干脆等对方回复时由 bus_wake 把自己叫醒（这本身就是最好的验证）</td></tr>
+<tr><td>11</td><td>想用 <code>SendMessage</code> 代替脚本</td><td>当协调人会话醒着时可以用：两边都是绕过模式，发送方会自动声明模式，所以能直接送达（实测叫醒了 T1）。但它要求发送方是一个正在运行的 Claude 会话，做不成全自动，只能当临时手段</td></tr>
+<tr><td>12</td><td>收到唤醒消息的会话要求改配置或批准权限</td><td>设计如此：其他会话发来的消息<strong>不能当作用户同意</strong>，也不能让接收方改权限或 CLAUDE.md。需要授权的事一律回到用户这里</td></tr>
+</table></div>
+
+<h2 id="s7">排错速查</h2>
+<pre><code>python3 agentic_workflow/tools/bus_wake.py list            # 是否发现了目标、ID 是否正确、idle/busy
+grep -n crossSessionInbound ~/.claude/settings.json        # 用户级 accept 是否在
+ls /tmp/cc-socks/                                          # 各会话 socket
+python3 -c "import json;print(json.load(open('$HOME/.claude/sessions/&lt;pid&gt;.json'))['status'])"
+tail .agentic/bus/wake_logs/&lt;agent&gt;.log                    # 是否投递过（唤醒 #N（claude））
+cat .agentic/bus/wake_state.json                           # 已唤醒到的 seq（大于新消息 seq 就不会再叫）
+tail .agentic/bus/wake_logs/watch.out                      # launchd watch 是否在跑
+# 在目标会话里：/status 看 Peer address；/list-agents 看自己的名字</code></pre>
+<div class="tblwrap"><table>
+<tr><th>症状</th><th>先查</th></tr>
+<tr><td>日志里有「唤醒」，但对方没有动静</td><td>用户级 accept；对方界面里有没有 Held peer message</td></tr>
+<tr><td>日志里没有「唤醒」</td><td><code>list</code> 里有没有这个 ID；<code>wake_state.json</code> 是否已经大于等于该 seq；消息是不是发给了别的 ID</td></tr>
+<tr><td>叫醒了错的会话</td><td>同一个 ID 对应多个在线会话，取的是最近活跃的那个。关掉旧会话，或者在 <code>wake_map.json</code> 里显式指定</td></tr>
+<tr><td><code>error:[Errno 61] Connection refused</code></td><td>会话已经退出，socket 是残留文件。下次扫描时会被进程存活检查过滤掉</td></tr>
+</table></div>
+
+<h2 id="s8">安全边界与撤销</h2>
+<ul>
+  <li><strong>影响范围：</strong>用户级 <code>accept</code> 对你<strong>所有项目</strong>的 Claude 会话生效。本机任何以你的用户身份运行的进程，都可以往你的会话里投递消息并开新一轮。其他系统用户和外部机器进不来（socket 权限是 0600；跨机器消息另有 Remote Control 通道，本组织已禁用）。</li>
+  <li><strong>不会放大权限：</strong>收到的消息不能批准权限请求，不能改设置或 CLAUDE.md，<code>/命令</code> 也不会被执行。它只能让接收方在自身权限内做事。</li>
+  <li><strong>费用：</strong>每次叫醒都会消耗 token。广播会叫醒除发送方以外的所有已发现会话，所以只在真正需要大家知道的时候发广播。</li>
+  <li><strong>撤销：</strong>删掉 <code>~/.claude/settings.json</code> 里那一行（备份在本次会话 scratchpad 的 <code>user-settings.json.bak</code>）。要让某个会话拒收，可以在那个项目里设 <code>"crossSessionInbound":"hold"</code> 或 <code>"refuse"</code>，仓库级设置收紧是有效的。</li>
+</ul>
+
+<h2 id="s9">来源</h2>
+<ul class="src">
+  <li><a href="https://code.claude.com/docs/en/cross-session-messaging">Claude Code Docs · Message your other Claude Code sessions</a>：收件箱 socket、投递规则、挂起与过期、非交互会话</li>
+  <li><a href="https://code.claude.com/docs/en/settings-reference">Claude Code Docs · Settings reference</a>：<code>crossSessionInbound</code>、<code>dialogExpiry</code></li>
+  <li><a href="https://github.com/sean2077/pairroom/pull/67">sean2077/pairroom #67</a>，以及其中引用的 <a href="https://github.com/anthropics/claude-code/issues/93720">anthropics/claude-code #93720</a>：socket 写入格式（auth 行 + <code>type:user</code>）</li>
+  <li><a href="https://github.com/sanvithreddyy/agent-send">sanvithreddyy/agent-send</a>：另一种思路，用 <code>asyncRewake</code> Stop hook 加文件收件箱（未采用）</li>
+  <li>项目仓库 / local 级设置只能收紧、<code>fromMode</code> 的解析位置：本机 Claude Code 2.1.289 程序代码（<code>strings</code> 检索）</li>
+</ul>
+<div class="foot">EndlessSpace · agentic_workflow · 2026-10-05 实测</div>
+</main>
+</div>
+</body>
+</html>
