@@ -98,7 +98,7 @@
     <li><a href="#d">Agent 通讯协议</a></li>
     <li><a href="#e">岗位与能力矩阵</a></li>
     <li><a href="#f">Git 分支/worktree 规范</a></li>
-    <li><a href="#g">任务状态跟踪与验收门</a></li>
+    <li><a href="#g">任务状态跟踪</a></li>
     <li><a href="#h">Agent 记忆与入口文件</a></li>
     <li><a href="#repo">仓库结构与工具</a></li>
     <li><a href="#start">快速上手</a></li>
@@ -128,12 +128,12 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 
 <div class="card grid">
   <div class="box"><h5>SPEC/（本文档）</h5><p>八章标准正文：域树、任务拆分、并行模型、通讯协议、岗位、Git、状态跟踪、记忆与入口。</p></div>
-  <div class="box"><h5>templates/</h5><p>域树 schema、任务表、所有权矩阵、验收 L0/L1/L2、HANDOFF，以及 3 个 JSON Schema。</p></div>
+  <div class="box"><h5>templates/</h5><p>域树 schema、任务表、所有权矩阵、证据备注、HANDOFF，以及 3 个 JSON Schema。</p></div>
   <div class="box"><h5>tools/</h5><p>6 个可执行 CLI：重叠校验、注册表、文件锁、消息总线、域树校验、任务状态。纯标准库。</p></div>
   <div class="box"><h5>examples/</h5><p>EndlessSpace 完整实例：16 个一级域、48 个子任务、10 条并行链、W1–W8 波次。</p></div>
 </div>
 
-<p>八章分别回答八个问题：<b>a</b> 项目长什么样（域树）？<b>b</b> 任务怎么切（子任务）？<b>c</b> 怎么排并行（矩阵+波次）？<b>d</b> agent 怎么对话？<b>e</b> 谁干什么（岗位）？<b>f</b> 代码怎么合（Git）？<b>g</b> 谁做完了、凭什么算完成（状态）？<b>h</b> 这些规矩怎么真正进 agent 的上下文（记忆与入口）。</p>
+<p>八章分别回答八个问题：<b>a</b> 项目长什么样（域树）？<b>b</b> 任务怎么切（子任务）？<b>c</b> 怎么排并行（矩阵+波次）？<b>d</b> agent 怎么对话？<b>e</b> 谁干什么（岗位）？<b>f</b> 代码怎么合（Git）？<b>g</b> 谁做完了（状态）？<b>h</b> 这些规矩怎么真正进 agent 的上下文（记忆与入口）。</p>
 
 <!-- ============ 1 ============ -->
 <h2 id="s1"><span class="k">1</span>总览：一条流水线</h2>
@@ -187,7 +187,7 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 
     <rect x="708" y="128" width="196" height="60" rx="10" fill="#1a1630" stroke="#3a3158"/>
     <text x="806" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑧ 独立复核 + 合并</text>
-    <text x="806" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">L0/L1/L2 → commit</text>
+    <text x="806" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">复核 → commit → 记状态</text>
 
     <line x1="214" y1="158" x2="244" y2="158" stroke="#b39dff" stroke-width="1.6" marker-end="url(#ar2)"/>
     <line x1="444" y1="158" x2="474" y2="158" stroke="#b39dff" stroke-width="1.6" marker-end="url(#ar2)"/>
@@ -322,10 +322,10 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 <h3>子任务表模板（六列）</h3>
 <p>每个子任务一行，最后一列「<b>改动文件（仓库相对路径）</b>」是<b>唯一数据源</b>——它让所有权矩阵可以被脚本自动推导和校验，而不是靠人脑记住。</p>
 <table>
-  <thead><tr><th>ID</th><th>子任务</th><th>真源/依据</th><th>落点</th><th>验收门槛</th><th>改动文件（仓库相对路径）</th></tr></thead>
+  <thead><tr><th>ID</th><th>子任务</th><th>真源/依据</th><th>落点</th><th>验收/备注（自由）</th><th>改动文件（仓库相对路径）</th></tr></thead>
   <tbody>
-    <tr><td><code>P1-1</code></td><td>research 栏滚动高度抖动修复</td><td>—</td><td><code>tech_view.gd</code></td><td>L1 反复滚动 3 次截图一致</td><td><code>Godot/presentation/tech/tech_view.gd</code></td></tr>
-    <tr><td><code>P4-2</code></td><td>IFF 环半径对齐</td><td>IFFVisuals.swift</td><td>IFF 绘制处</td><td>L2 环/舰比例 0.56</td><td><code>Godot/presentation/tactical_hud/world_feedback_layer.gd</code></td></tr>
+    <tr><td><code>P1-1</code></td><td>research 栏滚动高度抖动修复</td><td>—</td><td><code>tech_view.gd</code></td><td>反复滚动 3 次截图一致</td><td><code>Godot/presentation/tech/tech_view.gd</code></td></tr>
+    <tr><td><code>P4-2</code></td><td>IFF 环半径对齐</td><td>IFFVisuals.swift</td><td>IFF 绘制处</td><td>环/舰比例 0.56</td><td><code>Godot/presentation/tactical_hud/world_feedback_layer.gd</code></td></tr>
   </tbody>
 </table>
 <p>模板见 <code>templates/task-breakdown.md</code>；实例见 <code>examples/endlessspace-device-parity/tasks.md</code>。</p>
@@ -597,20 +597,22 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 <blockquote class="warn"><strong>教训：规范必须先自洽，再谈执行。</strong>执行中出现 agent 大量私拉分支/worktree、子任务做完不提交——根因不在 agent，而在<b>早期文档自相矛盾</b>：一边说「默认单主干直推、完成即 commit」，一边又鼓励「开 worktree 并行」。两套规则打架，agent 无所适从。<b>规则自相矛盾时，一定要先修规则。</b></blockquote>
 
 <!-- ============ g ============ -->
-<h2 id="g"><span class="k">g</span>任务状态跟踪与验收门 <span class="status bt">battle-tested</span></h2>
+<h2 id="g"><span class="k">g</span>任务状态跟踪 <span class="status bt">battle-tested</span></h2>
 
-<p>任务拆分得再好，只要「谁做完了、做到哪一步、凭什么算完成」靠人肉记在 Markdown 里，几天之内必然漂移。病根是把三种职责塞进同一个文件：<b>计划</b>、<b>状态</b>、<b>视图</b>。g 章把它拆成三层，每层只有一个真源。</p>
+<p>任务拆分得再好，只要「谁做完了、做到哪一步」靠人肉记在 Markdown 里，几天之内必然漂移。病根是把三种职责塞进同一个文件：<b>计划</b>、<b>状态</b>、<b>视图</b>。g 章把它拆成三层，每层只有一个真源。</p>
 
 <div class="card grid">
-  <div class="box"><h5>PLAN · 计划</h5><p>手写，只描述「要做什么、改哪些文件、验收等级」；<b>禁止写任何状态标记</b>（不打勾）。plan 退化为纯计划。</p></div>
+  <div class="box"><h5>PLAN · 计划</h5><p>手写，只描述「要做什么、改哪些文件」；<b>禁止写任何状态标记</b>（不打勾）。plan 退化为纯计划。</p></div>
   <div class="box"><h5>STATE · 状态</h5><p><code>.agentic/tasks/events.jsonl</code>，append-only 事件日志，<b>入库 git</b>，是唯一状态真源。状态只能靠追加事件改变。</p></div>
   <div class="box"><h5>VIEWS · 视图</h5><p>看板 / 甘特 / 对账报告，全部由 <code>task_state.py</code> <b>生成</b>，视为只读产物，<b>禁止手改</b>。</p></div>
   <div class="box"><h5>为什么不漂移</h5><p>状态只有一条写入路径（追加事件），视图重算即自洽；计划不再承载状态，也就不会出现「勾了没做 / 做了忘勾」。</p></div>
 </div>
 
-<h3>g.1 状态机</h3>
+<blockquote><strong>验收是「灯」，不是「门」。</strong>本章刻意<b>不给</b> <code>done</code> 设任何前置条件——不强制证据、不比较等级、不卡住任何人。理由：<b>快速迭代 &gt; 精准验收</b>；漏了不算事故，重新规划、再派任务去补就好；要有灰度思想，不追求绝对准确。卡住一个 agent 的代价，远高于漏掉一次验收。</blockquote>
 
-<p>五个正状态线性推进，两个旁支状态可作缓冲或终态。非法转移一律拒绝（退出码 2）；状态<b>不允许回退</b>，<code>done</code> 不可撤销。</p>
+<h3>g.1 状态机（允许前跳，终态可撤销）</h3>
+
+<p>五个正状态线性推进，两个旁支状态可作缓冲或终态。为降低摩擦，<b>允许前跳</b>——从 <code>pending</code> 一步记 <code>done</code> 也合法，只要目标不倒退。终态（done/failed）不可直接离开，但可用 <code>revoke</code> 追加一条补偿事件回到 <code>active</code>（历史不删，供纠错/反证）。</p>
 
 <figure class="fig">
 <svg viewBox="0 0 900 205" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="任务状态机">
@@ -635,7 +637,7 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 
     <rect x="535" y="36" width="130" height="46" rx="10" fill="#16233a" stroke="#6bccff"/>
     <text x="600" y="57" fill="#dbe7f5" text-anchor="middle" font-size="12">verify</text>
-    <text x="600" y="72" fill="#8fa6c0" text-anchor="middle" font-size="10">待验收门</text>
+    <text x="600" y="72" fill="#8fa6c0" text-anchor="middle" font-size="10">待查（可选）</text>
 
     <rect x="700" y="36" width="130" height="46" rx="10" fill="#123224" stroke="#6bffb8"/>
     <text x="765" y="57" fill="#6bffb8" text-anchor="middle" font-size="12">done</text>
@@ -667,45 +669,46 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
     <line x1="600" y1="82" x2="600" y2="146" stroke="#ff7a85" stroke-width="1.4" marker-end="url(#stgd)"/>
     <text x="607" y="118" fill="#ff7a85" font-size="10.5">fail</text>
     <line x1="500" y1="173" x2="531" y2="173" stroke="#ff7a85" stroke-width="1.4" marker-end="url(#stgd)"/>
+
+    <!-- revoke：终态 → active（补偿事件，历史不删） -->
+    <path d="M765,36 C765,4 435,4 435,30" stroke="#b39dff" stroke-width="1.4" fill="none" stroke-dasharray="5 3" marker-end="url(#stgd)"/>
+    <text x="600" y="150" fill="#b39dff" text-anchor="middle" font-size="10.5">revoke：终态 → active（补偿事件，历史不删）</text>
   </g>
 </svg>
-<figcaption>图 7 · 任务状态机：pending → claimed → active → verify → done，旁支 blocked / failed（任意非终态可 fail）</figcaption>
+<figcaption>图 7 · 状态机：pending → claimed → active → verify → done（可前跳），旁支 blocked / failed；终态可 revoke 反悔</figcaption>
 </figure>
 
 <table>
   <thead><tr><th>命令</th><th>转移</th><th>含义</th></tr></thead>
   <tbody>
-    <tr><td><code>claim</code></td><td>pending → claimed</td><td>认领任务，声明由谁做</td></tr>
-    <tr><td><code>start</code></td><td>claimed → active</td><td>开工</td></tr>
-    <tr><td><code>submit</code></td><td>active → verify</td><td>提交验收，附证据</td></tr>
-    <tr><td><code>done</code></td><td>verify → done</td><td>通过验收门，落终态</td></tr>
+    <tr><td><code>claim</code></td><td>→ claimed</td><td>认领任务，声明由谁做</td></tr>
+    <tr><td><code>start</code></td><td>→ active</td><td>开工（可从 pending/claimed 前跳）</td></tr>
+    <tr><td><code>submit</code></td><td>→ verify</td><td>提交待查（可选，不必须）</td></tr>
+    <tr><td><code>done</code></td><td>→ done</td><td>标记完成（<b>无前置条件</b>）</td></tr>
     <tr><td><code>block</code> / <code>unblock</code></td><td>↔ blocked</td><td>遇阻挂起 / 解除</td></tr>
     <tr><td><code>fail</code></td><td>→ failed</td><td>判定失败（终态）</td></tr>
+    <tr><td><code>revoke</code></td><td>done/failed → active</td><td>发现判断有误，追加补偿事件反悔（<code>--reason</code>）</td></tr>
   </tbody>
 </table>
 
-<h3>g.2 验收门：done 必须挂证据</h3>
+<h3>g.2 验收是灯：done 不设前置</h3>
 
-<p><code>done</code> 不是「我觉得做完了」，而是一道<b>门</b>：必须挂证据，且证据等级 ≥ 计划里该任务「验收」列声明的等级。</p>
+<p><code>done</code> 不是「过一道门」，而只是<b>记录一次判断</b>。工具<b>不</b>要求证据、<b>不</b>比较等级、<b>不</b>因缺证据而拒绝。想留痕就写可选备注（自由文本，如截图/日志路径），不写也照样能 done。</p>
 
-<pre><code># 证据格式：LEVEL:PATH（LEVEL ∈ L0/L1/L2）
+<pre><code># done 无前置条件；--note 纯自由文本，写不写都行
 python3 agentic_workflow/tools/task_state.py --root .agentic done P1-3 \
-    --agent a1 --evidence L2:Doc/godot/parity/p1-3/review.json</code></pre>
+    --agent a1 --note "截图 out/p1-3/ · verify.sh 退 0"
 
-<table>
-  <thead><tr><th>等级</th><th>含义</th><th>证据形态</th></tr></thead>
-  <tbody>
-    <tr><td><code>L0</code></td><td>自动测试全绿</td><td><code>verify.sh</code> 退出 0 的日志</td></tr>
-    <tr><td><code>L1</code></td><td>真实渲染 + 可重复动作脚本 + 状态断言</td><td>连跑 3 次的截图序列 + 状态断言</td></tr>
-    <tr><td><code>L2</code></td><td>双端并排人工对照</td><td>并排截图 + <code>review.json</code></td></tr>
-  </tbody>
-</table>
+# 允许前跳：从 pending 一步到位
+python3 agentic_workflow/tools/task_state.py --root .agentic done P2-7 --agent a1
 
-<blockquote class="warn"><strong>门的三条硬约束：</strong>① 等级不够 → 拒绝（如用 L1 证据过 L2 门）；② 证据路径实体不存在 → 拒绝；③ 计划声明等级从「验收」列的<b>列首</b>解析，避免正文里顺带提到 L2 被误判（实战踩过的坑）。</blockquote>
+# 发现判断有误：追加补偿事件反悔（历史不删）
+python3 agentic_workflow/tools/task_state.py --root .agentic revoke P1-3 \
+    --agent a1 --reason "当时真源已变，截图作废"</code></pre>
 
-<h3>g.3 三路对账 reconcile</h3>
+<h3>g.3 三路对账 reconcile（软报告）</h3>
 
-<p>工具同时读三方——<b>计划的打勾</b>（过渡期还残留时）、<b>事件日志</b>、<b>git 工作树改动</b>，把不一致显式列成五类差异；退出码 1 表示存在待处理差异，可直接挂 CI。</p>
+<p>工具同时读三方——<b>计划的打勾</b>（过渡期还残留时）、<b>事件日志</b>、<b>git 工作树改动</b>，把不一致列成四类差异。<b>这是体检报告，不是闸门</b>：它暴露漂移供你重新规划，落后再改都行。</p>
 
 <pre><code>python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md \
     reconcile --out .agentic/tasks/reconcile.md</code></pre>
@@ -713,10 +716,9 @@ python3 agentic_workflow/tools/task_state.py --root .agentic done P1-3 \
 <table>
   <thead><tr><th>差异类</th><th>含义</th><th>怎么处理</th></tr></thead>
   <tbody>
-    <tr><td>计划打勾但非 done</td><td>勾了却没事件（做了忘勾 / 勾了没做）</td><td>补事件或重新审计</td></tr>
+    <tr><td>计划打勾但非 done</td><td>勾了却没事件（做了忘勾 / 勾了没做）</td><td>补事件；过渡期后计划不再打勾</td></tr>
     <tr><td>有事件但未打勾</td><td>过渡期才有意义</td><td>删掉手写勾即可</td></tr>
-    <tr><td>done 但证据不合规</td><td>缺证据 / 等级不足 / 路径不存在</td><td>补证据或打回 verify</td></tr>
-    <tr><td>未登记却已改动其文件</td><td>任务还没 claim，文件已被改</td><td>该 agent 必须补 claim</td></tr>
+    <tr><td>未登记却已改动其文件</td><td>任务还没 claim，文件已被改</td><td>该 agent 补 claim（唯一的流程硬要求）</td></tr>
     <tr><td>工作树改动无归属</td><td>改了文件但不对应任何任务</td><td>补任务或确认是收尾改动</td></tr>
   </tbody>
 </table>
@@ -726,27 +728,26 @@ python3 agentic_workflow/tools/task_state.py --root .agentic done P1-3 \
 <p>框架接入一个「已经跑乱」的项目时，不要重放全部历史。做法是<b>审计跑批 + 一次性基线</b>，此后只向前记录：</p>
 
 <ol>
-  <li>用 git 历史、HANDOFF、截图、<code>review.json</code> 反推每个任务的真实状态，产出差异表；</li>
+  <li>用 git 历史、HANDOFF、截图反推每个任务的真实状态，产出差异表；</li>
   <li>用户逐条确认 → 写成基线 JSON（含 <code>reason</code> / <code>source_plan</code> / <code>audited_at</code>）；</li>
   <li><code>seed</code> 灌进 <code>events.jsonl</code> 作为起点；</li>
   <li>从计划文档删掉<b>所有</b>手写勾选，plan 退化为纯计划。</li>
 </ol>
 
-<blockquote><strong>关键判据：</strong>「打了勾的是否真做完了」由<b>证据</b>决定，而不是信任勾本身。EndlessSpace 本次审计发现 10 个勾全部为真，但另有 <b>6 个做完却忘勾</b>——漂移的方向恰好是「漏记」而不是「虚报」。</blockquote>
+<blockquote><strong>关键判据：</strong>「打了勾的是否真做完了」由<b>证据</b>决定，而不是信任勾本身——但「证据」是给人看的，不是给机器设卡的。EndlessSpace 本次审计发现 10 个勾全部为真，另 <b>6 个做完却忘勾</b>：漂移方向恰好是「漏记」而非「虚报」。审计只做<b>这一次</b>，之后靠事件日志向前累积。</blockquote>
 
 <h3>g.5 实例：EndlessSpace 基线重建</h3>
 
 <div class="kpi">
   <div><b>71</b><span>计划任务总数</span></div>
-  <div><b>25</b><span>seed 基线事件</span></div>
   <div><b>12/12</b><span>P0 全部完成</span></div>
   <div><b>6</b><span>做完却忘勾</span></div>
-  <div><b>11</b><span>未登记却已改文件</span></div>
+  <div><b>0</b><span>基线后未登记改动</span></div>
 </div>
 
-<p>审计把「P0 有的完成、有的没完成」这一团浆糊拆清楚了：P0 共 12 个任务<b>全部真实完成</b>，其中 6 个从未打勾；漂移全部来自「漏记」。基线灌入后，<code>reconcile</code> 前三类差异归零，只剩 Codex 未登记的 P1/P2 工作与未归属的工作树改动——这些正是接下来要补 claim 的部分。</p>
+<p>审计把「P0 有的完成、有的没完成」这团浆糊拆清楚了：P0 共 12 个任务<b>全部真实完成</b>，其中 6 个从未打勾——漂移全部来自「漏记」。基线灌入后，合作方（Codex）随即用本工具<b>自己</b>认领了 P1-8 / P2 系列（<code>claim</code>→<code>active</code>），对账的「未登记却已改动」从 11 条自动归零。</p>
 
-<blockquote class="warn"><strong>工具只解决一半。</strong>三层真源能消除「记录漂移」，但「未登记就先改文件」是<b>流程违规</b>——必须让 agent 开工前 <code>claim</code>，否则对账会持续报「未登记却已改动其文件」。</blockquote>
+<blockquote class="warn"><strong>工具只解决一半。</strong>三层真源能消除「记录漂移」，但「未登记就先改文件」是<b>流程违规</b>——所以 g 章唯一保留的硬要求，就是<b>开工前先 <code>claim</code></b>。</blockquote>
 
 <!-- ============ h ============ -->
 <h2 id="h"><span class="k">h</span>Agent 记忆与入口文件：让规矩真正进上下文 <span class="status bt">battle-tested</span></h2>
@@ -847,10 +848,10 @@ alwaysApply: true
 <p>入口文件该放的是<b>稳定原则 + 去哪找变动信息</b>，不该放会变的状态本身。把「任务在哪、状态怎么查」写成指针（可直接抄给任何项目）：</p>
 
 <pre><code>## 任务与状态入口（开工前必做）
-- 任务定义 / 验收等级 / 要改的文件 → Doc/&lt;批次&gt;计划文档.md
+- 任务定义 / 要改的文件        → Doc/&lt;批次&gt;计划文档.md
 - 任务真实状态（唯一真源）    → .agentic/tasks/events.jsonl
 - 查状态：python3 agentic_workflow/tools/task_state.py --root .agentic status P1-3
-- 状态机 pending→claimed→active→verify→done；done 必须挂 ≥ 计划等级的 L0/L1/L2 证据</code></pre>
+- 状态机 pending→claimed→active→verify→done（允许前跳）；done 无前置，留痕写可选 --note</code></pre>
 
 <p>这样无论谁开窗口、说「去做 P1-3」，agent 启动时都会读到这段指针，被逼着去查真正的定义与状态，而不是凭记忆瞎猜。</p>
 
@@ -866,7 +867,7 @@ alwaysApply: true
   <g font-family="ui-monospace,Menlo,monospace" font-size="12">
     <rect x="30" y="24" width="900" height="98" rx="12" fill="#16233a" stroke="#6bccff"/>
     <text x="50" y="48" fill="#6bccff" font-size="12.5">入口层 · A 类 · 每次会话自动注入</text>
-    <text x="50" y="68" fill="#8fa6c0" font-size="10.5">只放「不读就会犯错」的：铁律 / 协作规范 / 提交与验收门槛 / 任务与状态指针</text>
+    <text x="50" y="68" fill="#8fa6c0" font-size="10.5">只放「不读就会犯错」的：铁律 / 协作规范 / 提交与状态规范 / 任务与状态指针</text>
     <rect x="50" y="80" width="200" height="26" rx="6" fill="#0e1a2b" stroke="#24354f"/>
     <text x="150" y="97" fill="#dbe7f5" text-anchor="middle" font-size="11">AGENTS.md（真源）</text>
     <rect x="266" y="80" width="200" height="26" rx="6" fill="#0e1a2b" stroke="#24354f"/>
@@ -894,7 +895,7 @@ alwaysApply: true
 <table>
   <thead><tr><th>层</th><th>放什么</th><th>判断标准</th></tr></thead>
   <tbody>
-    <tr><td>入口层（A）</td><td>铁律、协作规范、提交/验收门槛、任务与状态指针</td><td>「不读就会犯错」的，才进这一层</td></tr>
+    <tr><td>入口层（A）</td><td>铁律、协作规范、提交/状态规范、任务与状态指针</td><td>「不读就会犯错」的，才进这一层</td></tr>
     <tr><td>按需层（B）</td><td>路径专属规则、技能、模板</td><td>只有碰到该类文件/场景才需要</td></tr>
     <tr><td>细节层（C）</td><td>架构文档、计划文档、HANDOFF、状态日志</td><td>可以通过指针随时查到，不必常驻上下文</td></tr>
   </tbody>
@@ -942,7 +943,7 @@ alwaysApply: true
 │   ├── file_lock.py               # CAS 文件锁：acquire/release/status/sweep
 │   ├── bus.py                     # 消息总线：send/read/tail（11 种消息类型）
 │   ├── validate_domains.py        # 域树校验：≤4 级 + 叶子停止规则
-│   └── task_state.py              # 任务状态：事件日志 + 状态机 + 验收门 + 看板/甘特/对账
+│   └── task_state.py              # 任务状态：事件日志 + 状态机 + 看板/甘特/对账
 └── examples/endlessspace-device-parity/
     ├── domains.json               # 16 个一级域、54 个叶子
     ├── tasks.md                   # P1–P4 六列表（改动文件逐字一致）
@@ -958,7 +959,7 @@ alwaysApply: true
     <tr><td><code>file_lock.py</code></td><td>文件级 CAS 锁，防两人同改一文件</td><td><code>acquire path --agent a1 --task P1-1</code></td></tr>
     <tr><td><code>bus.py</code></td><td>agent 间消息（冲突/请求/交接/中断）</td><td><code>send --from a2 --to a1 --type CONFLICT</code></td></tr>
     <tr><td><code>validate_domains.py</code></td><td>域树层级 ≤4、叶子停止规则</td><td><code>domains.json</code></td></tr>
-    <tr><td><code>task_state.py</code></td><td>任务状态真源 + 验收门 + 三路对账</td><td><code>done P1-3 --evidence L2:review.json</code> · <code>board</code>/<code>gantt</code>/<code>reconcile</code></td></tr>
+    <tr><td><code>task_state.py</code></td><td>任务状态真源（灯化，done 无前置）+ 三路对账</td><td><code>done P1-3 --note "截图 out/p1-3"</code> · <code>board</code>/<code>gantt</code>/<code>reconcile</code></td></tr>
   </tbody>
 </table>
 
@@ -984,9 +985,9 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 python3 agentic_workflow/tools/file_lock.py --root .agentic acquire &lt;file&gt; --agent a1 --task P1-1
 python3 agentic_workflow/tools/bus.py      --root .agentic send --from a1 --to a2 --type CONFLICT --body "&lt;file&gt; 我锁了"
 
-# 7. 状态：认领 → 开工 → 提交 → 过验收门（done 必须挂证据）
+# 7. 状态：认领 → 开工 → 提交 → 完成（done 无前置，留痕写可选 --note）
 python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md claim P1-1 --agent a1
-python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md done  P1-1 --evidence L1:out/p1-1/shots
+python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md done  P1-1 --agent a1 --note "截图 out/p1-1/shots"
 #    看板 / 甘特 / 对账（生成物，勿手改）
 python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md board --out .agentic/tasks/board.md</code></pre>
 
@@ -1032,7 +1033,7 @@ python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLA
     <tr><td>文件锁 / 注册表 / 消息总线（d）</td><td><span class="status th">部分验证</span></td><td>CLI 已自测闭环；<b>多 agent 真实并发</b>尚未在跨厂商场景验证</td></tr>
     <tr><td>协作式中断 / 强抢占（d）</td><td><span class="status th">理论</span></td><td>跨厂商无内核级抢占，依赖 agent 服从规范</td></tr>
     <tr><td>Reviewer / Integrator 岗位（e）</td><td><span class="status th">设计</span></td><td>已定岗与甘特节点，尚未启用</td></tr>
-    <tr><td>任务状态跟踪 / 验收门 / 对账（g）</td><td><span class="status bt">battle-tested</span></td><td>在 EndlessSpace 71 任务计划上跑通审计收口与基线重建，工具自测闭环</td></tr>
+    <tr><td>任务状态跟踪 / 对账（g）</td><td><span class="status bt">battle-tested</span></td><td>在 EndlessSpace 71 任务计划上跑通审计收口与基线重建，工具自测闭环</td></tr>
     <tr><td>Agent 记忆 / 入口文件规范（h）</td><td><span class="status bt">battle-tested</span></td><td>在 EndlessSpace 完成单一真源 + 转发 + 指针落地（AGENTS.md / CLAUDE.md / .trae/rules）</td></tr>
   </tbody>
 </table>

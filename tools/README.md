@@ -104,26 +104,29 @@ python3 tools/validate_domains.py domains.json --json
 
 退出码：`0` 通过；`1` 存在违规（逐条列出）；`2` 文件缺失/JSON 非法。
 
-### 6. `task_state.py` — 任务状态跟踪与验收门
+### 6. `task_state.py` — 任务状态跟踪（灯化）
 
 解决「一份手改 Markdown 同时当计划+状态+视图」导致的漂移。三层职责分离：
 
-- **PLAN**：计划文档里的任务表——只写计划（任务/验收要求/改动文件），**不写状态**。
+- **PLAN**：计划文档里的任务表——只写计划（任务/改动文件/可选备注），**不写状态**。
 - **STATE**：`<root>/tasks/events.jsonl`——append-only，每行=一次状态转移，**唯一状态真源**。
 - **VIEWS**：`board` / `gantt` / `reconcile`——全部由本工具生成，**禁止手改**。
 
-状态机：`pending → claimed → active → verify → done`；旁支 `非终态 → blocked → active`、`任意非终态 → failed`。
-`verify` 是显式验收门：`done` 必须挂证据（`LEVEL:PATH`），等级不得低于计划文档该任务行声明的
-验收等级（L0/L1/L2 取最大，缺省 L0），且证据实体（文件或目录）真实存在。
+状态机：`pending → claimed → active → verify → done`，**允许前跳**（`pending` 直接记 `done` 也行，
+只要目标不倒退）；旁支 `非终态 → blocked → active`、`任意非终态 → failed`。
+**`done` 没有任何前置条件**——不强制证据、不比较等级、不因缺证据而拒绝；终态（done/failed）只能靠 `revoke` 追加补偿事件回到 active（历史不删）。
+
+> **验收是「灯」，不是「门」。** 想留痕就写 `--note`（自由文本），不写也照样能 done；漏了由 `reconcile` 软报告暴露后重新规划。快速迭代 > 精准验收。
 
 ```bash
 PLAN=Doc/godot/plans/PLAN.md
 # 写事件（append-only）
 python3 tools/task_state.py --plan $PLAN claim  P1-1 --agent codex-1
 python3 tools/task_state.py --plan $PLAN start  P1-1 --agent codex-1
-python3 tools/task_state.py --plan $PLAN submit P1-1 --agent codex-1 --evidence L1:Godot/tools/flows/tech_l2.json
-python3 tools/task_state.py --plan $PLAN done   P1-1 --agent codex-1 --evidence L2:out/godot/parity/tech/x/review.json
+python3 tools/task_state.py --plan $PLAN submit P1-1 --agent codex-1
+python3 tools/task_state.py --plan $PLAN done   P1-1 --agent codex-1 --note "截图 out/...；verify.sh 退 0"
 python3 tools/task_state.py --plan $PLAN block  P4-5 --agent codex-1 --reason "等 P0-12 取证"
+python3 tools/task_state.py --plan $PLAN revoke P1-1 --agent codex-1 --reason "当时判断有误，重开"
 # 视图
 python3 tools/task_state.py --plan $PLAN list --batch P1
 python3 tools/task_state.py --plan $PLAN board --out .agentic/tasks/board.md
@@ -132,10 +135,12 @@ python3 tools/task_state.py --plan $PLAN reconcile        # plan 打勾 × 事�
 python3 tools/task_state.py --plan $PLAN seed baseline.json   # 审计收口：一次性灌基线
 ```
 
-`reconcile` 输出五类差异：计划打勾但非 done / 有事件但未打勾 / done 证据不合规 /
-未登记却已改动其文件 / 工作树改动未归属任何任务。
+`--note` 是自由文本；兼容旧写法 `--evidence LEVEL:PATH`（折叠成路径串并入备注显示，**不校验**）。
 
-退出码：`0` 成功；`1` 校验不通过（done 证据不合规、reconcile 有差异）；`2` 用法或数据错误。
+`reconcile` 输出四类差异：计划打勾但非 done / 有事件但未打勾 /
+未登记却已改动其文件 / 工作树改动未归属任何任务。**这是体检报告，不是闸门**。
+
+退出码：`0` 成功；`1` reconcile 发现差异（报告信号，非阻塞）；`2` 用法或数据错误（如非法转移）。
 
 ## 嵌入 agent 工作流（推荐节奏）
 
@@ -147,7 +152,7 @@ python3 tools/task_state.py --plan $PLAN seed baseline.json   # 审计收口：�
                 bus.py send --type CLAIM/CONFLICT/REQUEST_HELP/HANDOFF …
 ④ 状态：  task_state.py claim/start <任务>           # 状态只写事件日志，不手改计划文档
 ⑤ 收工：  file_lock.py release <文件> --agent …
-          写状态：task_state.py submit/done <任务> --evidence L2:…/review.json
+          写状态：task_state.py done <任务> --agent … --note "…"（可选留痕，无前置）
           agent_registry.py release --agent …      # 或 bus.py send --type DONE
 （看板：task_state.py board/gantt/reconcile、agent_registry.py list / who-owns、
   file_lock.py list / sweep、bus.py read / tail）

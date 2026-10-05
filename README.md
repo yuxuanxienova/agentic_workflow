@@ -10,20 +10,21 @@
 
 | 目录 | 内容 |
 | --- | --- |
-| [`agentic_workflow.html`](agentic_workflow.html) | **标准正文**（本文档）：七章 a–g + 图示 + EndlessSpace 实例 |
-| [`templates/`](templates/) | 域树 schema、任务表、所有权矩阵、验收 L0/L1/L2、HANDOFF，及 3 个 JSON Schema |
+| [`agentic_workflow.html`](agentic_workflow.html) | **标准正文**（本文档）：八章 a–h + 图示 + EndlessSpace 实例 |
+| [`templates/`](templates/) | 域树 schema、任务表、所有权矩阵、证据备注、HANDOFF，及 3 个 JSON Schema |
 | [`tools/`](tools/) | 6 个可执行 CLI（纯标准库）：重叠校验 / 注册表 / 文件锁 / 消息总线 / 域树校验 / **任务状态跟踪** |
 | [`examples/endlessspace-device-parity/`](examples/endlessspace-device-parity/) | 完整运行示例：16 个一级域、48 个子任务、10 条并行链、W1–W8 波次 |
 
-## 七章
+## 八章
 
-- **a 项目解读与功能域树**：树状搜索 → 1–4 级功能域树；叶子停止规则 = ≤3 文件 + 唯一验收。
+- **a 项目解读与功能域树**：树状搜索 → 1–4 级功能域树；叶子停止规则 = ≤3 文件 + 一个完成标志。
 - **b 任务解读与拆分**：模糊目标 → 影响域集 → 子任务（每任务带「改动文件」列，作为唯一数据源）。
 - **c 并行模型**：按文件聚合出串行链 → 跨域波次 + 甘特；波内零文件重叠。
 - **d Agent 通讯协议**：文件总线（`.agentic/`）：registry + locks + inbox + events；11 种消息类型。
 - **e 岗位与能力矩阵**：Planner / Executor / Reviewer / Integrator（+ Coordinator）。
 - **f Git 规范**：混合模型——默认单主干直推，仅「体量大且文件完全独立」才开短命 worktree。
-- **g 任务状态跟踪**：三层真源（PLAN/STATE/VIEWS）+ 状态机 + 验收门（done 必须挂证据）+ 三路对账。
+- **g 任务状态跟踪**：三层真源（PLAN/STATE/VIEWS）+ 状态机（允许前跳）+ **验收是「灯」不是「门」**（done 无前置，可选 `--note` 留痕）+ 三路对账软报告。
+- **h Agent 记忆与入口文件**：让规矩真正进 agent 上下文——单一真源 + 转发 + 指针。
 
 ## 快速上手
 
