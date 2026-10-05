@@ -1,0 +1,9 @@
+# 运行时协调状态（agent 注册表 / 锁 / 消息），不入库
+.agentic/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

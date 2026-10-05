@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "registry.schema.json",
+  "title": "Agent 注册表 (Agent Registry)",
+  "description": "多个厂商 AI agent 的协作注册表。每条记录描述一个 agent 的身份、角色、当前认领的任务/文件与心跳，供调度器判定并发与冲突。",
+  "type": "object",
+  "required": ["version", "seq", "agents"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema 版本，固定为 1。"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "单调递增的写入序号，用于检测并发覆盖。"
+    },
+    "agents": {
+      "type": "object",
+      "description": "以 agent_id 为键的注册记录表。",
+      "additionalProperties": { "$ref": "#/definitions/agent" }
+    }
+  },
+  "definitions": {
+    "agent": {
+      "type": "object",
+      "required": [
+        "agent_id",
+        "model",
+        "role",
+        "task_id",
+        "files",
+        "branch",
+        "worktree",
+        "status",
+        "heartbeat_ts",
+        "registered_ts"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "agent 唯一标识，须与所在键一致。"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "模型/厂商标识（用于跨厂商协作记录）。"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["planner", "executor", "reviewer", "integrator", "coordinator"],
+          "description": "岗位角色：planner 规划 / executor 执行 / reviewer 审查 / integrator 集成 / coordinator 协调。"
+        },
+        "task_id": {
+          "type": "string",
+          "description": "当前认领的子任务 ID，空闲时可为空字符串。"
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "该 agent 当前持有的文件集（仓库相对路径）。"
+        },
+        "branch": {
+          "type": "string",
+          "description": "所在分支名（单主干直推时即主干名）。"
+        },
+        "worktree": {
+          "type": "string",
+          "description": "工作树路径；未使用 worktree 时为空字符串。"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["idle", "working", "blocked", "interrupt_requested", "done"],
+          "description": "agent 状态。"
+        },
+        "heartbeat_ts": {
+          "type": "number",
+          "description": "最近一次心跳时间戳（epoch 秒）。"
+        },
+        "registered_ts": {
+          "type": "number",
+          "description": "注册时间戳（epoch 秒）。"
+        }
+      }
+    }
+  }
+}

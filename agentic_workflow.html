@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic Workflow 标准 · 通用多 Agent 协作框架</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111c2e; --panel2:#16233a; --line:#24354f;
+    --text:#dbe7f5; --muted:#8fa6c0; --accent:#6bccff; --accent2:#6bffb8;
+    --warn:#ffb86b; --danger:#ff7a85; --purple:#b39dff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       line-height:1.75;font-size:15.5px;-webkit-font-smoothing:antialiased}
+  .wrap{display:grid;grid-template-columns:250px minmax(0,1fr);max-width:1400px;margin:0 auto}
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+      padding:28px 18px;border-right:1px solid var(--line);background:#0a111d}
+  nav .brand{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:.4px;margin-bottom:4px}
+  nav .brand small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;letter-spacing:0}
+  nav ol{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
+  nav ol li{counter-increment:s;margin:2px 0}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;display:block;padding:5px 9px;border-radius:7px;transition:.15s}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  nav a::before{content:counter(s) ". ";color:#4d6b8a;font-family:var(--mono);font-size:11px}
+  /* ---------- main ---------- */
+  main{padding:44px 52px 120px;min-width:0}
+  h1{font-size:32px;line-height:1.3;margin:0 0 6px;letter-spacing:-.4px}
+  .lede{color:var(--muted);font-size:16px;margin:0 0 8px}
+  .meta{color:#5d7794;font-size:12.5px;font-family:var(--mono);margin-bottom:34px}
+  h2{font-size:23px;margin:60px 0 14px;padding-top:14px;border-top:1px solid var(--line);letter-spacing:-.2px}
+  h2 .k{color:var(--accent);font-family:var(--mono);font-size:15px;margin-right:10px;padding:2px 8px;
+        border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+  h3{font-size:17px;margin:32px 0 10px;color:#eaf3ff}
+  h4{font-size:14.5px;margin:22px 0 8px;color:var(--accent);letter-spacing:.2px}
+  p{margin:10px 0}
+  a{color:var(--accent)}
+  code{font-family:var(--mono);font-size:12.8px;background:#0a1526;border:1px solid var(--line);
+       border-radius:5px;padding:1.5px 6px;color:#a8dcff}
+  pre{background:#0a1526;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:#c7ddf2;font-size:12.8px;line-height:1.65}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  strong{color:#f0f7ff}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .card.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .box{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .box h5{margin:0 0 6px;font-size:13px;color:var(--accent2);font-family:var(--mono)}
+  .box p{margin:0;font-size:13px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.4px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cfe4fb;font-weight:600;font-size:12.8px;white-space:nowrap}
+  tr:nth-child(even) td{background:#0e1828}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1.5px 7px;border-radius:5px;
+       border:1px solid var(--line);background:#0a1526;color:var(--muted);white-space:nowrap}
+  .tag.chain{color:var(--warn);border-color:#5a4526}
+  .tag.indep{color:var(--accent2);border-color:#2a5a45}
+  .tag.hot{color:var(--danger);border-color:#5a2a31}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:3px solid var(--accent);
+             background:#0e1a2b;border-radius:0 10px 10px 0;color:#c3d8ee}
+  blockquote.warn{border-left-color:var(--warn);background:#1d1a12}
+  blockquote.danger{border-left-color:var(--danger);background:#1f1416}
+  .fig{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .fig svg{display:block;width:100%;height:auto}
+  .fig figcaption{color:var(--muted);font-size:12.5px;text-align:center;margin-top:10px}
+  .status{display:inline-block;font-size:11.5px;font-family:var(--mono);padding:2px 9px;border-radius:20px;margin-left:8px}
+  .status.bt{background:#123224;color:#6bffb8;border:1px solid #245c40}
+  .status.th{background:#2a2413;color:#ffb86b;border:1px solid #5a4a24}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:18px 0}
+  .kpi div{flex:1;min-width:130px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+  .kpi b{display:block;font-size:26px;color:var(--accent);font-family:var(--mono);line-height:1.2}
+  .kpi span{font-size:12px;color:var(--muted)}
+  hr{border:none;border-top:1px solid var(--line);margin:40px 0}
+  .foot{color:#5d7794;font-size:12.5px;text-align:center;margin-top:60px}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+    nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    main{padding:28px 20px 80px}
+    .card.grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">Agentic Workflow<small>通用多 Agent 协作标准 · v0.1</small></div>
+  <ol>
+    <li><a href="#s0">这是什么 / 怎么用</a></li>
+    <li><a href="#s1">总览：一条流水线</a></li>
+    <li><a href="#a">项目解读与功能域树</a></li>
+    <li><a href="#b">任务解读与拆分</a></li>
+    <li><a href="#c">并行模型（矩阵+波次）</a></li>
+    <li><a href="#d">Agent 通讯协议</a></li>
+    <li><a href="#e">岗位与能力矩阵</a></li>
+    <li><a href="#f">Git 分支/worktree 规范</a></li>
+    <li><a href="#repo">仓库结构与工具</a></li>
+    <li><a href="#start">快速上手</a></li>
+    <li><a href="#case">实例：EndlessSpace</a></li>
+    <li><a href="#maturity">成熟度与已知边界</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<h1>Agentic Workflow 标准</h1>
+<p class="lede">一套<b>独立于项目</b>的多 Agent 协作框架：把模糊的大目标，拆成可并行、可验收、且<b>不会互相踩文件</b>的任务网络。</p>
+<p class="meta">v0.1 · 运行示例：EndlessSpace 真机四域修复 · 本仓库自身即一个 git 项目</p>
+
+<!-- ============ 0 ============ -->
+<h2 id="s0"><span class="k">0</span>这是什么 / 怎么用</h2>
+
+<p>它是「怎么组织多个 AI agent 并行干活」的<b>标准 + 模板 + 工具 + 实例</b>。核心命题只有一个：</p>
+
+<blockquote><strong>并行度上限 = 独立文件链数。</strong>想让 10 个 agent 真正并行，必须先把工作切到 10 组互不相交的文件上——而不是把 10 个 agent 堆到同一个文件。</blockquote>
+
+<p>它自己是一个 git 仓库，与任何具体项目解耦。别的项目要用时，直接：</p>
+<pre><code>cd &lt;你的项目&gt;
+git clone &lt;本仓库地址&gt; agentic_workflow
+# 然后按 templates/ 填三份文件：domains.json → task-breakdown → ownership-matrix
+python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 P3-1 P4-7</code></pre>
+
+<div class="card grid">
+  <div class="box"><h5>SPEC/（本文档）</h5><p>六章标准正文：域树、任务拆分、并行模型、通讯协议、岗位、Git 规范。</p></div>
+  <div class="box"><h5>templates/</h5><p>域树 schema、任务表、所有权矩阵、验收 L0/L1/L2、HANDOFF，以及 3 个 JSON Schema。</p></div>
+  <div class="box"><h5>tools/</h5><p>5 个可执行 CLI：重叠校验、注册表、文件锁、消息总线、域树校验。纯标准库。</p></div>
+  <div class="box"><h5>examples/</h5><p>EndlessSpace 完整实例：16 个一级域、48 个子任务、10 条并行链、W1–W8 波次。</p></div>
+</div>
+
+<p>六章分别回答六个问题：<b>a</b> 项目长什么样（域树）？<b>b</b> 任务怎么切（子任务）？<b>c</b> 怎么排并行（矩阵+波次）？<b>d</b> agent 怎么对话？<b>e</b> 谁干什么（岗位）？<b>f</b> 代码怎么合（Git）。</p>
+
+<!-- ============ 1 ============ -->
+<h2 id="s1"><span class="k">1</span>总览：一条流水线</h2>
+
+<figure class="fig">
+<svg viewBox="0 0 940 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="流水线总览">
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#6bccff"/>
+    </marker>
+    <marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#b39dff"/>
+    </marker>
+  </defs>
+  <!-- row 1 -->
+  <g font-family="ui-monospace,Menlo,monospace" font-size="12.5">
+    <rect x="18" y="26" width="196" height="60" rx="10" fill="#16233a" stroke="#24354f"/>
+    <text x="116" y="52" fill="#6bccff" text-anchor="middle" font-size="12">① 模糊大目标</text>
+    <text x="116" y="71" fill="#8fa6c0" text-anchor="middle" font-size="10.5">"把 Swift 版一比一迁移"</text>
+
+    <rect x="248" y="26" width="196" height="60" rx="10" fill="#16233a" stroke="#24354f"/>
+    <text x="346" y="52" fill="#6bccff" text-anchor="middle" font-size="12">② 树状搜索</text>
+    <text x="346" y="71" fill="#8fa6c0" text-anchor="middle" font-size="10.5">入口→目录→模块→文件</text>
+
+    <rect x="478" y="26" width="196" height="60" rx="10" fill="#16233a" stroke="#24354f"/>
+    <text x="576" y="52" fill="#6bccff" text-anchor="middle" font-size="12">③ 功能域树 (≤4 级)</text>
+    <text x="576" y="71" fill="#8fa6c0" text-anchor="middle" font-size="10.5">叶子 = ≤3 文件 + 唯一验收</text>
+
+    <rect x="708" y="26" width="196" height="60" rx="10" fill="#16233a" stroke="#24354f"/>
+    <text x="806" y="52" fill="#6bccff" text-anchor="middle" font-size="12">④ 任务拆分</text>
+    <text x="806" y="71" fill="#8fa6c0" text-anchor="middle" font-size="10.5">每任务带「改动文件」列</text>
+
+    <line x1="214" y1="56" x2="244" y2="56" stroke="#6bccff" stroke-width="1.6" marker-end="url(#ar)"/>
+    <line x1="444" y1="56" x2="474" y2="56" stroke="#6bccff" stroke-width="1.6" marker-end="url(#ar)"/>
+    <line x1="674" y1="56" x2="704" y2="56" stroke="#6bccff" stroke-width="1.6" marker-end="url(#ar)"/>
+    <!-- snake connector -->
+    <path d="M806,86 L806,108 L116,108 L116,128" fill="none" stroke="#6bccff" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <!-- row 2 -->
+    <rect x="18" y="128" width="196" height="60" rx="10" fill="#1a1630" stroke="#3a3158"/>
+    <text x="116" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑤ 文件所有权矩阵</text>
+    <text x="116" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">按文件聚合 → 串行链</text>
+
+    <rect x="248" y="128" width="196" height="60" rx="10" fill="#1a1630" stroke="#3a3158"/>
+    <text x="346" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑥ 跨域波次 + 甘特</text>
+    <text x="346" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">波内零文件重叠</text>
+
+    <rect x="478" y="128" width="196" height="60" rx="10" fill="#1a1630" stroke="#3a3158"/>
+    <text x="576" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑦ 并行执行</text>
+    <text x="576" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">锁 / 心跳 / 消息总线</text>
+
+    <rect x="708" y="128" width="196" height="60" rx="10" fill="#1a1630" stroke="#3a3158"/>
+    <text x="806" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑧ 独立复核 + 合并</text>
+    <text x="806" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">L0/L1/L2 → commit</text>
+
+    <line x1="214" y1="158" x2="244" y2="158" stroke="#b39dff" stroke-width="1.6" marker-end="url(#ar2)"/>
+    <line x1="444" y1="158" x2="474" y2="158" stroke="#b39dff" stroke-width="1.6" marker-end="url(#ar2)"/>
+    <line x1="674" y1="158" x2="704" y2="158" stroke="#b39dff" stroke-width="1.6" marker-end="url(#ar2)"/>
+
+    <text x="470" y="222" fill="#5d7794" text-anchor="middle" font-size="11">
+      ①–④ 由 Planner 完成（写文件）；⑤–⑥ 由 Coordinator 校验（跑工具）；⑦–⑧ Executor ↔ Reviewer
+    </text>
+  </g>
+</svg>
+<figcaption>图 1 · 从模糊目标到可并行任务网络的八步流水线</figcaption>
+</figure>
+
+<p>关键分工：<b>①–④ 是「想清楚」</b>（Planner 产出计划文档），<b>⑤–⑥ 是「算清楚」</b>（Coordinator 用工具把计划编译成调度），<b>⑦–⑧ 是「做出来」</b>（Executor 干活、Reviewer 独立复核）。</p>
+
+<!-- ============ A ============ -->
+<h2 id="a"><span class="k">a</span>项目解读与功能域树 <span class="status bt">battle-tested</span></h2>
+
+<p>一般的项目很大很复杂，第一步是<b>树状搜索</b>，建立整体认知，然后把它建成一棵<b>功能域树（1–4 级）</b>。</p>
+
+<h3>树状搜索方法</h3>
+<ol>
+  <li><b>找入口</b>：主场景 / main / 路由 / 菜单，先知道「应用从哪进」。</li>
+  <li><b>扫目录</b>：按 <code>presentation/ app/ domain/</code> 这类分层枚举（见工具 <code>ls -d */</code> 系列）。</li>
+  <li><b>双向核对</b>：把<b>产品面</b>（用户能看到的页面/流程）与<b>代码面</b>（目录/模块/依赖）对照。冲突处标记为待澄清。</li>
+  <li><b>建域</b>：一级域 = 一个可独立验收的大功能面；逐级下钻，最多 4 级。</li>
+  <li><b>落文件</b>：给每个叶子域标注它实际涉及的文件路径（这一步直接决定后面的并行度）。</li>
+</ol>
+
+<blockquote class="warn"><strong>反面教训（本框架的来源之一）：</strong>第一版的功能域是「从任务清单倒推」的，不是「从项目结构盘点」的，于是漏掉了 market / spaceport / store / devtools / fleet / war / economy 等一整批域。<strong>必须先盘点、再定域。</strong></blockquote>
+
+<h3>层级与停止规则</h3>
+<p>「最多 4 级」还不够，否则永远切不完。必须给<b>叶子</b>定义停止规则——三条同时满足即<strong>停</strong>：</p>
+<div class="card grid">
+  <div class="box"><h5>① 文件收敛</h5><p>该叶子映射到 <b>≤ 3 个文件</b>。</p></div>
+  <div class="box"><h5>② 验收唯一</h5><p>能写出<b>唯一一条</b>验收标准。</p></div>
+  <div class="box"><h5>③ 切分无收益</h5><p>再往下切<b>不再改变文件集合</b>（并行度不再提升）。</p></div>
+  <div class="box"><h5>④ 硬顶</h5><p><code>level = 4</code> 强制为叶子，不许再分。</p></div>
+</div>
+
+<h3>示例：EndlessSpace 一级域（16 个，实扫得到）</h3>
+<p>下面这张图是 <code>examples/endlessspace-device-parity/domains.json</code> 的 <code>battle</code> 子树——它是全树最深、最能说明「为什么要按文件切」的域：</p>
+
+<figure class="fig">
+<svg viewBox="0 0 940 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="battle 功能域子树">
+  <g font-family="ui-monospace,Menlo,monospace" font-size="11.5">
+    <defs>
+      <marker id="art2" markerWidth="8" markerHeight="8" refX="6.5" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 Z" fill="#4d6b8a"/>
+      </marker>
+    </defs>
+    <!-- root -->
+    <rect x="26" y="128" width="120" height="44" rx="9" fill="#16233a" stroke="#6bccff"/>
+    <text x="86" y="149" fill="#6bccff" text-anchor="middle" font-size="12.5">battle</text>
+    <text x="86" y="164" fill="#8fa6c0" text-anchor="middle" font-size="10">L1 战斗/战术</text>
+
+    <!-- L2 column -->
+    <g fill="#0e1828" stroke="#24354f">
+      <rect x="250" y="18"  width="230" height="34" rx="7"/>
+      <rect x="250" y="58"  width="230" height="34" rx="7"/>
+      <rect x="250" y="98"  width="230" height="34" rx="7"/>
+      <rect x="250" y="138" width="230" height="34" rx="7"/>
+      <rect x="250" y="178" width="230" height="34" rx="7"/>
+      <rect x="250" y="218" width="230" height="34" rx="7"/>
+      <rect x="250" y="258" width="230" height="34" rx="7"/>
+    </g>
+    <g fill="#cfe4fb">
+      <text x="264" y="40">战术视图壳 · tactical_node_shell.gd</text>
+      <text x="264" y="80">3D 舰船层 · helios/tactical_3d_layer.gd</text>
+      <text x="264" y="120">相机取景 · helios/tactical_camera_mapper.gd</text>
+      <text x="264" y="160">星系背景 · environment/tactical_backdrop.gd</text>
+      <text x="264" y="200">敌我识别 IFF · world_feedback_layer.gd</text>
+      <text x="264" y="240">雷达 · battle_radar_view.gd（含五按钮）</text>
+      <text x="264" y="280">HUD …（编组槽 / 缩放 / 状态盘）</text>
+    </g>
+    <!-- connectors -->
+    <g stroke="#4d6b8a" stroke-width="1.3" fill="none">
+      <path d="M146,150 C200,150 200,35 246,35" marker-end="url(#art2)"/>
+      <path d="M146,150 C200,150 200,75 246,75" marker-end="url(#art2)"/>
+      <path d="M146,150 C200,150 200,115 246,115" marker-end="url(#art2)"/>
+      <path d="M146,150 C200,150 200,155 246,155" marker-end="url(#art2)"/>
+      <path d="M146,150 C200,150 200,195 246,195" marker-end="url(#art2)"/>
+      <path d="M146,150 C200,150 200,235 246,235" marker-end="url(#art2)"/>
+      <path d="M146,150 C200,150 200,275 246,275" marker-end="url(#art2)"/>
+    </g>
+    <!-- L3 for HUD -->
+    <g fill="#0b1526" stroke="#2f4560">
+      <rect x="536" y="212" width="150" height="26" rx="6"/>
+      <rect x="536" y="242" width="150" height="26" rx="6"/>
+      <rect x="536" y="272" width="150" height="26" rx="6"/>
+    </g>
+    <g fill="#9fb8d1" font-size="10.5">
+      <text x="546" y="229">battle_group_rail.gd</text>
+      <text x="546" y="259">zoom_controls_view.gd</text>
+      <text x="546" y="289">*_status_plate.gd</text>
+    </g>
+    <g stroke="#4d6b8a" stroke-width="1.2" fill="none">
+      <path d="M480,275 C508,275 508,225 532,225" marker-end="url(#art2)"/>
+      <path d="M480,275 C508,275 508,255 532,255" marker-end="url(#art2)"/>
+      <path d="M480,275 C508,275 508,285 532,285" marker-end="url(#art2)"/>
+    </g>
+    <text x="700" y="60" fill="#5d7794" font-size="11">↖ 每个二级子域各自独立</text>
+    <text x="700" y="80" fill="#5d7794" font-size="11">   → 天然可并行</text>
+    <text x="700" y="120" fill="#5d7794" font-size="11">雷达文件同时承载</text>
+    <text x="700" y="140" fill="#5d7794" font-size="11">五按钮 affordance →</text>
+    <text x="700" y="160" fill="#ffb86b" font-size="11">与雷达任务同链，必须串行</text>
+  </g>
+</svg>
+<figcaption>图 2 · <code>battle</code> 子树：一级 → 二级（各独立文件）→ 三级（HUD 内部拆分）</figcaption>
+</figure>
+
+<p>全树 16 个一级域：<code>shell · homebase · tech · shipyard · equip · market · spaceport · store · battle · strategic_map · fleet · war · economy · progression · persistence · devtools</code>，共 54 个叶子。完整数据见 <code>examples/endlessspace-device-parity/domains.json</code>。</p>
+
+<!-- ============ B ============ -->
+<h2 id="b"><span class="k">b</span>任务解读与拆分 <span class="status bt">battle-tested</span></h2>
+
+<p>输入通常是模糊的大任务，例如「<i>把 Swift 版一比一迁移成 Godot 版</i>」。拆分是一条固定五步流水线：</p>
+
+<div class="card">
+<p style="font-family:var(--mono);font-size:13px;color:#a8dcff;margin:0">
+目标 &nbsp;→&nbsp; 影响域集（树状搜索命中）&nbsp;→&nbsp; 每域列子任务 &nbsp;→&nbsp; 每任务填「改动文件」&nbsp;→&nbsp; 生成矩阵与波次
+</p>
+</div>
+
+<h3>子任务粒度三条件</h3>
+<ul>
+  <li><b>一个交付物</b>（不是「优化一下」这种无边界的描述）；</li>
+  <li><b>一条验收标准</b>（可判定通过/不通过）；</li>
+  <li><b>文件集最小</b>（改动文件越少，并行度越高）。</li>
+</ul>
+
+<h3>子任务表模板（六列）</h3>
+<p>每个子任务一行，最后一列「<b>改动文件（仓库相对路径）</b>」是<b>唯一数据源</b>——它让所有权矩阵可以被脚本自动推导和校验，而不是靠人脑记住。</p>
+<table>
+  <thead><tr><th>ID</th><th>子任务</th><th>真源/依据</th><th>落点</th><th>验收门槛</th><th>改动文件（仓库相对路径）</th></tr></thead>
+  <tbody>
+    <tr><td><code>P1-1</code></td><td>research 栏滚动高度抖动修复</td><td>—</td><td><code>tech_view.gd</code></td><td>L1 反复滚动 3 次截图一致</td><td><code>Godot/presentation/tech/tech_view.gd</code></td></tr>
+    <tr><td><code>P4-2</code></td><td>IFF 环半径对齐</td><td>IFFVisuals.swift</td><td>IFF 绘制处</td><td>L2 环/舰比例 0.56</td><td><code>Godot/presentation/tactical_hud/world_feedback_layer.gd</code></td></tr>
+  </tbody>
+</table>
+<p>模板见 <code>templates/task-breakdown.md</code>；实例见 <code>examples/endlessspace-device-parity/tasks.md</code>。</p>
+
+<!-- ============ C ============ -->
+<h2 id="c"><span class="k">c</span>并行模型：文件所有权矩阵 + 跨域波次 <span class="status bt">battle-tested</span></h2>
+
+<h3>为什么按「功能域」分批是错的</h3>
+<blockquote class="danger">
+初版把批次轴定成「功能域」（P1=TECH、P2=SHIPYARD…），再要求「每批 ≥10 并行」。这是<b>根本性错误</b>：一个功能域在文件层面往往只有 1 个文件——TECH 的 12 个子任务里 10 个都改 <code>tech_view.gd</code>。同一文件同一时刻只能被一个 agent 写，所以<b>同域真实并行度 ≈ 1</b>。
+</blockquote>
+<p>四条反思：<b>①轴选错</b>（并行度写在了错误的轴上）；<b>②依赖被掩盖</b>（真正的串行资源是文件，不是功能域）；<b>③常识倒置</b>（跨页面并行撞车概率远低于同页面）；<b>④单位错位</b>（文件系统里资源的容量单位是<b>文件</b>）。</p>
+
+<h3>矩阵：按文件分组 = 串行链</h3>
+<p>把每个子任务的「改动文件」按<b>文件</b>归并，落在同一文件上的任务就构成一条<b>串行链</b>，只能顺序执行；不同文件 = 不同链 = 可并行。</p>
+<table>
+  <thead><tr><th>域</th><th>链</th><th>关键文件</th><th>成员</th></tr></thead>
+  <tbody>
+    <tr><td>TECH</td><td><span class="tag chain">例：T</span></td><td><code>presentation/tech/tech_view.gd</code></td><td>P1-1 → P1-3 → P1-4 → P1-5 → P1-6 → P1-8</td></tr>
+    <tr><td>SHIPYARD</td><td><span class="tag chain">例：S</span></td><td><code>presentation/shipyard/shipyard_view.gd</code></td><td>P2-1 → P2-2 → … → P2-7</td></tr>
+    <tr><td>BATTLE</td><td><span class="tag chain">例：B1</span></td><td><code>presentation/tactical_hud/battle_radar_view.gd</code></td><td>P4-7（五按钮）→ P4-9（雷达本体）</td></tr>
+    <tr><td>BATTLE</td><td><span class="tag indep">B10</span></td><td><code>presentation/tactical_hud/world_feedback_layer.gd</code></td><td>P4-2</td></tr>
+  </tbody>
+</table>
+
+<blockquote class="warn"><strong>教训：矩阵必须逐文件核对，不能凭目录名推测。</strong>初版凭目录名想象，把 <code>presentation/tactical_hud/*</code> 当成一条链，还把路径写成 <code>presentation/tactical/*</code>（该目录<b>根本不存在</b>）。回到真实文件核对后发现：<code>tactical_3d_layer.gd</code> 实际在 <code>presentation/helios/</code>；五按钮（SHIPS/FLEET/TECH/RETREAT/MAP）是 <code>battle_radar_view.gd</code> 里的 affordance，与雷达<b>同文件</b>；IFF 环实际画在 <code>world_feedback_layer.gd</code>。结果：BATTLE 的真实并行链从误判的约 4 条，修正为 <b>10 条</b>。</blockquote>
+
+<h3>波次：每波从不同链各取 1 个</h3>
+<p>排波次的唯一规则：<b>同一波次内，每个任务取自不同链</b>。这样波内零文件重叠，无需合并、不会分叉。</p>
+
+<figure class="fig">
+<svg viewBox="0 0 940 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="并发度曲线">
+  <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+    <line x1="60" y1="200" x2="900" y2="200" stroke="#24354f"/>
+    <line x1="60" y1="200" x2="60" y2="20" stroke="#24354f"/>
+    <text x="34" y="26" fill="#5d7794" font-size="10">17</text>
+    <text x="40" y="200" fill="#5d7794" font-size="10">0</text>
+    <!-- bars -->
+    <g>
+      <rect x="80"  y="30"  width="72" height="170" rx="6" fill="#6bccff" opacity=".85"/>
+      <rect x="182" y="150" width="72" height="50"  rx="6" fill="#6bccff" opacity=".62"/>
+      <rect x="284" y="160" width="72" height="40"  rx="6" fill="#6bccff" opacity=".55"/>
+      <rect x="386" y="160" width="72" height="40"  rx="6" fill="#6bccff" opacity=".55"/>
+      <rect x="488" y="180" width="72" height="20"  rx="6" fill="#6bccff" opacity=".45"/>
+      <rect x="590" y="180" width="72" height="20"  rx="6" fill="#6bccff" opacity=".45"/>
+      <rect x="692" y="190" width="72" height="10"  rx="6" fill="#ffb86b" opacity=".8"/>
+      <rect x="794" y="196" width="72" height="4"   rx="3" fill="#ff7a85" opacity=".8"/>
+    </g>
+    <g fill="#9fb8d1" text-anchor="middle" font-size="10.5">
+      <text x="116" y="220">W1</text><text x="218" y="220">W2</text><text x="320" y="220">W3</text>
+      <text x="422" y="220">W4</text><text x="524" y="220">W5</text><text x="626" y="220">W6</text>
+      <text x="728" y="220">W7</text><text x="830" y="220">W8</text>
+    </g>
+    <g fill="#6bccff" text-anchor="middle" font-size="11.5">
+      <text x="116" y="24">17</text><text x="218" y="144">5</text><text x="320" y="154">4</text>
+      <text x="422" y="154">4</text><text x="524" y="174">2</text><text x="626" y="174">2</text>
+    </g>
+    <text x="728" y="184" fill="#ffb86b" text-anchor="middle" font-size="11.5">1</text>
+    <text x="830" y="190" fill="#ff7a85" text-anchor="middle" font-size="10.5">串行</text>
+    <text x="480" y="250" fill="#5d7794" text-anchor="middle" font-size="11">并发度随各链被占用而收缩（W8 = 收口串行链 C）</text>
+  </g>
+</svg>
+<figcaption>图 3 · 并发度曲线：峰值（=独立链数）出现在 W1，之后逐波收缩</figcaption>
+</figure>
+
+<table>
+  <thead><tr><th>波次</th><th>并发</th><th>取法</th></tr></thead>
+  <tbody>
+    <tr><td><b>W1</b></td><td><b>17</b></td><td>T/S/S′/E1–E4/B1–B10 各取第 1 个任务</td></tr>
+    <tr><td>W2</td><td>5</td><td>T P1-3 ｜ S P2-2 ｜ E1 P3-7 ｜ E2 P3-4 ｜ B1 P4-9</td></tr>
+    <tr><td>W3 / W4</td><td>4 / 4</td><td>各链继续推进</td></tr>
+    <tr><td>W5 / W6 / W7</td><td>2 / 2 / 1</td><td>仅剩 T、S 两条长链</td></tr>
+    <tr><td><b>W8</b></td><td>串行</td><td>收口链 C（catalog/矩阵同一文件，必须串行）</td></tr>
+  </tbody>
+</table>
+
+<div class="kpi">
+  <div><b>17</b><span>W1 峰值并发 = 独立链数</span></div>
+  <div><b>10</b><span>BATTLE 真实并行链（修正前误判≈4）</span></div>
+  <div><b>0</b><span>波内文件重叠（脚本校验）</span></div>
+  <div><b>48</b><span>P1–P4 子任务总数</span></div>
+</div>
+
+<blockquote><strong>怎么提高并行度？</strong>唯一办法是<b>把工作切到更多互相独立的文件</b>——重构拆分、抽新文件、把热点拆薄——而不是在同一个文件上堆更多 agent。若并发太高难协调，可先压缩 W1 再逐波放开，但<b>绝不可把同域的多个任务放进同一波</b>。</blockquote>
+
+<!-- ============ D ============ -->
+<h2 id="d"><span class="k">d</span>Agent 通讯协议 <span class="status th">理论 / 部分验证</span></h2>
+
+<p>并行做任务时难免互相打架，而且框架是通用的，可能一个是 Claude 的 agent、一个是 Codex 的 agent。<b>硬约束：跨厂商、跨进程 → 通讯只能是「文件总线」，不能用内存/IPC。</b></p>
+
+<h3>协调目录结构（项目内 <code>.agentic/</code>）</h3>
+<pre><code>.agentic/
+├── registry.json          # 谁在干什么：agent_id/model/role/task/files/status/heartbeat
+├── locks/&lt;sha1(path)&gt;.json # 每个文件的 CAS 锁：{path, owner, task_id, acquired_ts, ttl, seq}
+├── inbox/&lt;agent_id&gt;.jsonl  # 定向收件箱（追加式）
+└── events.jsonl           # 全局权威事件流（append-only）</code></pre>
+
+<h3>消息类型（11 种）</h3>
+<p><span class="tag">CLAIM</span> <span class="tag">RELEASE</span> <span class="tag">CONFLICT</span> <span class="tag">PROPOSE</span> <span class="tag">ACCEPT</span> <span class="tag">REJECT</span> <span class="tag">REQUEST_HELP</span> <span class="tag">INTERRUPT</span> <span class="tag">HANDOFF</span> <span class="tag">BLOCKED</span> <span class="tag">DONE</span></p>
+<p>消息体：<code>{"seq","ts","from","to","type","task_id","body","refs"}</code>。<code>to = "*"</code> 表示广播（只写 <code>events.jsonl</code>）。</p>
+
+<h3>协作时序</h3>
+<figure class="fig">
+<svg viewBox="0 0 940 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="agent 通讯时序图">
+  <defs>
+    <marker id="amd" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#6bccff"/>
+    </marker>
+    <marker id="amd2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#ff7a85"/>
+    </marker>
+    <marker id="amd3" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#6bffb8"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace,Menlo,monospace" font-size="11.5">
+    <!-- lifelines -->
+    <rect x="60"  y="16" width="150" height="34" rx="8" fill="#16233a" stroke="#6bccff"/>
+    <text x="135" y="38" fill="#6bccff" text-anchor="middle">Executor A (Claude)</text>
+    <rect x="330" y="16" width="210" height="34" rx="8" fill="#1a1630" stroke="#b39dff"/>
+    <text x="435" y="38" fill="#b39dff" text-anchor="middle">.agentic/ 文件总线</text>
+    <rect x="660" y="16" width="170" height="34" rx="8" fill="#16233a" stroke="#6bccff"/>
+    <text x="745" y="38" fill="#6bccff" text-anchor="middle">Executor B (Codex)</text>
+
+    <line x1="135" y1="50" x2="135" y2="300" stroke="#24354f" stroke-dasharray="4 4"/>
+    <line x1="435" y1="50" x2="435" y2="300" stroke="#24354f" stroke-dasharray="4 4"/>
+    <line x1="745" y1="50" x2="745" y2="300" stroke="#24354f" stroke-dasharray="4 4"/>
+
+    <!-- 1 A acquire -->
+    <line x1="135" y1="80" x2="430" y2="80" stroke="#6bccff" stroke-width="1.6" marker-end="url(#amd)"/>
+    <text x="150" y="74" fill="#9fb8d1">① acquire tech_view.gd（CAS 加锁）</text>
+    <line x1="430" y1="102" x2="137" y2="102" stroke="#6bffb8" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#amd3)"/>
+    <text x="150" y="116" fill="#6bffb8">② OK：锁归 A（写 locks/ + registry + heartbeat）</text>
+
+    <!-- 2 B tries -->
+    <line x1="745" y1="146" x2="440" y2="146" stroke="#6bccff" stroke-width="1.6" marker-end="url(#amd)"/>
+    <text x="470" y="140" fill="#9fb8d1">③ B 也要改同一文件 → acquire 被拒</text>
+    <line x1="430" y1="168" x2="743" y2="168" stroke="#ff7a85" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#amd2)"/>
+    <text x="470" y="182" fill="#ff7a85">④ 返回持有者：A / task P1-1 / ttl 900s</text>
+
+    <!-- 3 B sends conflict -->
+    <line x1="745" y1="212" x2="440" y2="212" stroke="#ff7a85" stroke-width="1.6" marker-end="url(#amd2)"/>
+    <text x="470" y="206" fill="#ff7a85">⑤ send CONFLICT → A 的 inbox + events</text>
+
+    <!-- 4 A reads inbox -->
+    <line x1="430" y1="242" x2="137" y2="242" stroke="#6bccff" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#amd)"/>
+    <text x="150" y="256" fill="#9fb8d1">⑥ A 在任务边界读 inbox，开始协商（PROPOSE/ACCEPT）</text>
+
+    <!-- 5 release -->
+    <line x1="135" y1="284" x2="430" y2="284" stroke="#6bffb8" stroke-width="1.6" marker-end="url(#amd3)"/>
+    <text x="150" y="278" fill="#6bffb8">⑦ A 完成 → RELEASE + HANDOFF + heartbeat 清零</text>
+    <text x="470" y="300" fill="#5d7794" font-size="10.5">⑧ B 下一轮 acquire 成功</text>
+  </g>
+</svg>
+<figcaption>图 4 · 加锁 → 拒绝 → 冲突消息 → 协商 → 释放 的协作式时序</figcaption>
+</figure>
+
+<h3>频率约定</h3>
+<table>
+  <thead><tr><th>动作</th><th>时机</th><th>工具</th></tr></thead>
+  <tbody>
+    <tr><td>加锁（CLAM）</td><td>写任何文件之前的<b>硬闸门</b></td><td><code>file_lock.py acquire</code></td></tr>
+    <tr><td>心跳</td><td>每工具步 或 ≤30s</td><td><code>agent_registry.py heartbeat</code></td></tr>
+    <tr><td>收件箱轮询</td><td>任务边界 + 每 N 步</td><td><code>bus.py read</code></td></tr>
+    <tr><td>冲突检测</td><td>每次 write 前（不可省）</td><td><code>file_lock.py status</code></td></tr>
+    <tr><td>释放</td><td>子任务完成/交接时</td><td><code>file_lock.py release</code></td></tr>
+  </tbody>
+</table>
+
+<blockquote class="danger"><strong>关于「打断」——必须诚实。</strong>跨厂商<b>没有内核级抢占</b>。只能做<b>协作式中断</b>：高优先级 <code>INTERRUPT</code> 写入对方 inbox + registry 标 <code>interrupt_requested</code>，规范要求对方<b>在下一个任务边界必须处理 inbox</b>。真正的强抢占只能由<b>协调者（人或编排器）</b>发信号/杀进程完成。这套协议依赖 agent 服从，属<b>理论/部分验证</b>，不要当成硬保证。</blockquote>
+
+<!-- ============ E ============ -->
+<h2 id="e"><span class="k">e</span>岗位与能力矩阵</h2>
+
+<p>目前只有两个岗位：一个<b>分配任务的</b>（Planner），N 个<b>执行者</b>（Executor）。为更高效率和质量，框架直接定义 4 个岗位，并让甘特图能挂非执行节点：</p>
+
+<table>
+  <thead><tr><th>岗位</th><th>职责</th><th>产出</th><th>所需能力</th><th>甘特节点</th></tr></thead>
+  <tbody>
+    <tr><td><b>Planner</b> 规划者</td><td>树状搜索、建域树、拆任务、排波次</td><td>计划文档（a–c 章产物）</td><td>长上下文、结构化写作</td><td>前置（不占链）</td></tr>
+    <tr><td><b>Executor</b> 执行者</td><td>实现子任务、跑 L0/L1、交证据</td><td>代码 + 证据目录</td><td>代码生成、工具使用、可看截图</td><td>链上的实心节点</td></tr>
+    <tr><td><b>Reviewer</b> 复核者</td><td>独立复验 L2、判定 review.json</td><td>复核结论</td><td>视觉比对、批判性</td><td>执行节点后的<b>依赖节点</b></td></tr>
+    <tr><td><b>Integrator</b> 集成者</td><td>收口合并、跑全量回归、保主干线性</td><td>合并提交</td><td>Git 熟练、全局视野</td><td>收口串行段</td></tr>
+    <tr><td><b>Coordinator</b> 协调者</td><td>跑重叠校验、仲裁锁冲突、派发</td><td>调度决定</td><td>工具脚本、仲裁</td><td>贯穿全程</td></tr>
+  </tbody>
+</table>
+
+<figure class="fig">
+<svg viewBox="0 0 940 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="岗位流水线与制衡">
+  <defs>
+    <marker id="arp" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#4d6b8a"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace,Menlo,monospace" font-size="12">
+    <rect x="20" y="34" width="150" height="52" rx="10" fill="#16233a" stroke="#b39dff"/>
+    <text x="95" y="57" fill="#b39dff" text-anchor="middle">Planner</text>
+    <text x="95" y="74" fill="#8fa6c0" text-anchor="middle" font-size="10">写计划</text>
+
+    <rect x="230" y="34" width="150" height="52" rx="10" fill="#16233a" stroke="#6bccff"/>
+    <text x="305" y="57" fill="#6bccff" text-anchor="middle">Executor</text>
+    <text x="305" y="74" fill="#8fa6c0" text-anchor="middle" font-size="10">实现 + L0/L1</text>
+
+    <rect x="440" y="34" width="150" height="52" rx="10" fill="#16233a" stroke="#6bffb8"/>
+    <text x="515" y="57" fill="#6bffb8" text-anchor="middle">Reviewer</text>
+    <text x="515" y="74" fill="#8fa6c0" text-anchor="middle" font-size="10">独立复验 L2</text>
+
+    <rect x="650" y="34" width="150" height="52" rx="10" fill="#16233a" stroke="#ffb86b"/>
+    <text x="725" y="57" fill="#ffb86b" text-anchor="middle">Integrator</text>
+    <text x="725" y="74" fill="#8fa6c0" text-anchor="middle" font-size="10">合并 + 回归</text>
+
+    <line x1="170" y1="60" x2="226" y2="60" stroke="#4d6b8a" stroke-width="1.5" marker-end="url(#arp)"/>
+    <line x1="380" y1="60" x2="436" y2="60" stroke="#4d6b8a" stroke-width="1.5" marker-end="url(#arp)"/>
+    <line x1="590" y1="60" x2="646" y2="60" stroke="#4d6b8a" stroke-width="1.5" marker-end="url(#arp)"/>
+    <path d="M515,86 L515,102 L305,102 L305,88" fill="none" stroke="#ff7a85" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arp)"/>
+    <text x="410" y="116" fill="#ff7a85" text-anchor="middle" font-size="10.5">复核不通过 → 打回重做</text>
+    <text x="900" y="20" fill="#5d7794" text-anchor="end" font-size="10.5">Coordinator 贯穿：派发 / 冲突仲裁</text>
+  </g>
+</svg>
+<figcaption>图 5 · 岗位流水线：执行 → 独立复核 → 集成，复核不过打回</figcaption>
+</figure>
+
+<blockquote><strong>当前落地策略：</strong>先只开 <b>Planner×1 + Executor×N</b>。Reviewer 与 Integrator 作为<b>扩展点</b>写进标准与甘特图，等质量要求上来时再启用（关键点：<b>复核必须由「另一双眼睛」做</b>，Executor 不得自证通过）。</blockquote>
+
+<!-- ============ F ============ -->
+<h2 id="f"><span class="k">f</span>Git 分支 / worktree / 合并规范 <span class="status bt">battle-tested</span></h2>
+
+<p>采用<b>混合模型</b>：默认单主干直推，仅「体量大且文件完全独立」的任务才开短命 worktree。</p>
+
+<figure class="fig">
+<svg viewBox="0 0 940 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Git 分支决策树">
+  <defs>
+    <marker id="arg" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#4d6b8a"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace,Menlo,monospace" font-size="12">
+    <rect x="330" y="16" width="290" height="44" rx="10" fill="#1a1630" stroke="#b39dff"/>
+    <text x="475" y="43" fill="#dbe7f5" text-anchor="middle" font-size="11.5">任务是否「体量大且文件完全独立」？</text>
+
+    <line x1="400" y1="60" x2="220" y2="96" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#arg)"/>
+    <text x="270" y="80" fill="#ff7a85">否（绝大多数）</text>
+    <line x1="550" y1="60" x2="730" y2="96" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#arg)"/>
+    <text x="640" y="80" fill="#6bffb8">是（少数）</text>
+
+    <rect x="70" y="102" width="300" height="46" rx="10" fill="#16233a" stroke="#6bccff"/>
+    <text x="220" y="122" fill="#6bccff" text-anchor="middle" font-size="11.5">单主干 codex/godot-integration 直推</text>
+    <text x="220" y="139" fill="#8fa6c0" text-anchor="middle" font-size="10.5">子任务过验收即 commit，禁止跨任务堆积</text>
+
+    <rect x="580" y="102" width="300" height="46" rx="10" fill="#16233a" stroke="#ffb86b"/>
+    <text x="730" y="122" fill="#ffb86b" text-anchor="middle" font-size="11.5">短暂 worktree + 短命分支</text>
+    <text x="730" y="139" fill="#8fa6c0" text-anchor="middle" font-size="10.5">验收通过后「当天」合主干并删除</text>
+
+    <text x="220" y="176" fill="#5d7794" text-anchor="middle" font-size="10.5">主干保持线性，优先 rebase/squash</text>
+    <text x="730" y="176" fill="#5d7794" text-anchor="middle" font-size="10.5">worktree 必须登记进 registry（谁在用哪个目录）</text>
+    <text x="475" y="200" fill="#ff7a85" text-anchor="middle" font-size="10.5">任何模型下：热点文件串行；不对主干 force-push</text>
+  </g>
+</svg>
+<figcaption>图 6 · 混合模型决策树</figcaption>
+</figure>
+
+<div class="card grid">
+  <div class="box"><h5>热点文件（永远串行）</h5><p>主场景 <code>main.gd/main.tscn</code>、测试注册 <code>test_runner.gd</code>、验收脚本 <code>verify.sh</code>、parity 矩阵、本计划文档。只在收尾集成时改。</p></div>
+  <div class="box"><h5>提交规范</h5><p><code>type(scope): 描述</code>；只 <code>git add</code> 具体文件；不主动 push；docs-only 提交不得夹带代码。</p></div>
+  <div class="box"><h5>合并策略</h5><p>优先 rebase/squash 保线性；冲突本应由文件所有权矩阵<b>预防</b>（不该发生）；禁 force-push。</p></div>
+  <div class="box"><h5>未跟踪文件不过夜</h5><p>临时脚本放 <code>/tmp</code> 用后删；散落分支/worktree 必须清空。</p></div>
+</div>
+
+<blockquote class="warn"><strong>教训：规范必须先自洽，再谈执行。</strong>执行中出现 agent 大量私拉分支/worktree、子任务做完不提交——根因不在 agent，而在<b>早期文档自相矛盾</b>：一边说「默认单主干直推、完成即 commit」，一边又鼓励「开 worktree 并行」。两套规则打架，agent 无所适从。<b>规则自相矛盾时，一定要先修规则。</b></blockquote>
+
+<!-- ============ repo ============ -->
+<h2 id="repo"><span class="k">9</span>仓库结构与工具</h2>
+
+<pre><code>agentic_workflow/
+├── agentic_workflow.html      # 本文档：六章标准正文
+├── README.md
+├── templates/
+│   ├── domain-tree.schema.json    domain-tree.example.json
+│   ├── task-breakdown.md          ownership-matrix.md
+│   ├── acceptance.md              handoff.md
+│   └── registry.schema.json  lock.schema.json  message.schema.json
+├── tools/
+│   ├── check_file_ownership.py    # 分派前：同波任务的文件重叠校验（硬闸门）
+│   ├── agent_registry.py          # 注册表：register/heartbeat/who-owns/stale
+│   ├── file_lock.py               # CAS 文件锁：acquire/release/status/sweep
+│   ├── bus.py                     # 消息总线：send/read/tail（11 种消息类型）
+│   └── validate_domains.py        # 域树校验：≤4 级 + 叶子停止规则
+└── examples/endlessspace-device-parity/
+    ├── domains.json               # 16 个一级域、54 个叶子
+    ├── tasks.md                   # P1–P4 六列表（改动文件逐字一致）
+    ├── ownership-matrix.md        # 串行链表 + 热点 + BATTLE 勘误
+    ├── waves.md                   # W1–W8 + 逐波重叠验证
+    └── gantt.txt</code></pre>
+
+<table>
+  <thead><tr><th>工具</th><th>一句话</th><th>典型用法</th></tr></thead>
+  <tbody>
+    <tr><td><code>check_file_ownership.py</code></td><td>同波任务文件重叠 → 有重叠退出 1</td><td><code>--plan PLAN.md P1-1 P2-1 P3-1 P4-7</code></td></tr>
+    <tr><td><code>agent_registry.py</code></td><td>谁在干什么、谁持有哪个文件</td><td><code>who-owns path</code> · <code>stale --ttl 900</code></td></tr>
+    <tr><td><code>file_lock.py</code></td><td>文件级 CAS 锁，防两人同改一文件</td><td><code>acquire path --agent a1 --task P1-1</code></td></tr>
+    <tr><td><code>bus.py</code></td><td>agent 间消息（冲突/请求/交接/中断）</td><td><code>send --from a2 --to a1 --type CONFLICT</code></td></tr>
+    <tr><td><code>validate_domains.py</code></td><td>域树层级 ≤4、叶子停止规则</td><td><code>domains.json</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ============ start ============ -->
+<h2 id="start"><span class="k">10</span>快速上手</h2>
+
+<pre><code># 1. 在目标项目里克隆框架
+git clone &lt;本仓库&gt; agentic_workflow
+
+# 2. 盘项目 → 填域树（照 templates/domain-tree.schema.json）
+$EDITOR agentic_workflow/domains.json
+
+# 3. 拆任务，每个任务行末写「改动文件（仓库相对路径）」列 → PLAN.md
+#    （照 templates/task-breakdown.md）
+
+# 4. 校验域树
+python3 agentic_workflow/tools/validate_domains.py agentic_workflow/domains.json
+
+# 5. 分派前：校验同波任务无文件重叠（有重叠即报错，必须串行或归同一 agent）
+python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 P3-1 P4-7
+
+# 6. 开工前加锁 + 登记；收工释放 + 交接
+python3 agentic_workflow/tools/file_lock.py --root .agentic acquire &lt;file&gt; --agent a1 --task P1-1
+python3 agentic_workflow/tools/bus.py      --root .agentic send --from a1 --to a2 --type CONFLICT --body "&lt;file&gt; 我锁了"</code></pre>
+
+<!-- ============ case ============ -->
+<h2 id="case"><span class="k">11</span>实例：EndlessSpace 真机四域修复</h2>
+
+<p>这是本框架的<b>来源与运行示例</b>——一个 Swift→Godot 一比一迁移工程，用户真机实测一次性报回四类问题（SHIPYARD 三栏错位 / EQUIP 三栏全空 / BATTLE 比例不一致且不开火 / TECH 图标错乱）。完整文件见 <code>examples/endlessspace-device-parity/</code>。</p>
+
+<div class="card grid">
+  <div class="box"><h5>教训 1 · 并行轴选错</h5><p>按「功能域」分批 → 同域并行度 ≈ 1。正确切片是<b>跨域</b>；文件才是资源容量的单位。</p></div>
+  <div class="box"><h5>教训 2 · 规范自相矛盾</h5><p>agent 私拉分支/worktree、不提交，根因是文档同时写了「单主干直推」和「开 worktree 并行」。修规则优先于修执行。</p></div>
+  <div class="box"><h5>教训 3 · 矩阵必须核对真实文件</h5><p>BATTLE 链数从凭目录名误判的≈4，逐文件核对后修正为 <b>10</b>；<code>presentation/tactical/</code> 目录根本不存在。</p></div>
+  <div class="box"><h5>结论</h5><p>并行度上限 = 独立链数 = T1+S1+S′1+E4+B10 = <b>17</b>，对应 W1 峰值。</p></div>
+</div>
+
+<h3>实例甘特（链 × 波次）</h3>
+<table>
+  <thead><tr><th>链 \ 波次</th><th>W1</th><th>W2</th><th>W3</th><th>W4</th><th>W5</th><th>W6</th><th>W7</th><th>W8 收口</th></tr></thead>
+  <tbody>
+    <tr><td>T</td><td>P1-1</td><td>P1-3</td><td>P1-4</td><td>P1-5</td><td>P1-6</td><td>P1-8</td><td>—</td><td>P1-11→P1-12</td></tr>
+    <tr><td>S</td><td>P2-1</td><td>P2-2</td><td>P2-3</td><td>P2-4</td><td>P2-5</td><td>P2-6</td><td>P2-7</td><td>P2-10→9→11→12</td></tr>
+    <tr><td>S′</td><td>P2-8</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>E1</td><td>P3-1</td><td>P3-7</td><td>P3-11</td><td>P3-12</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>E2</td><td>P3-3</td><td>P3-4</td><td>P3-5</td><td>P3-8</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>E3</td><td>P3-2</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td>E4</td><td>P3-6</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>P3-9</td></tr>
+    <tr><td>B1</td><td>P4-7</td><td>P4-9</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>P4-12</td></tr>
+    <tr><td>B2–B10</td><td>P4-6/1/3/4/5/8/11/10/2</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><td><b>并发</b></td><td><b>17</b></td><td>5</td><td>4</td><td>4</td><td>2</td><td>2</td><td>1</td><td>串行</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ maturity ============ -->
+<h2 id="maturity"><span class="k">12</span>成熟度与已知边界</h2>
+
+<p>本框架目前只有<b>一个项目</b>的经验，必须诚实地标注哪些是实战验证、哪些是设计推演：</p>
+
+<table>
+  <thead><tr><th>能力</th><th>状态</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>域树 / 任务拆分 / 所有权矩阵 / 波次 / 甘特（a–c、f）</td><td><span class="status bt">battle-tested</span></td><td>在 EndlessSpace 上完整跑通并修正过一轮</td></tr>
+    <tr><td>重叠校验 / 域树校验工具</td><td><span class="status bt">battle-tested</span></td><td>对真实 48 任务计划跑出正确结果</td></tr>
+    <tr><td>文件锁 / 注册表 / 消息总线（d）</td><td><span class="status th">部分验证</span></td><td>CLI 已自测闭环；<b>多 agent 真实并发</b>尚未在跨厂商场景验证</td></tr>
+    <tr><td>协作式中断 / 强抢占（d）</td><td><span class="status th">理论</span></td><td>跨厂商无内核级抢占，依赖 agent 服从规范</td></tr>
+    <tr><td>Reviewer / Integrator 岗位（e）</td><td><span class="status th">设计</span></td><td>已定岗与甘特节点，尚未启用</td></tr>
+  </tbody>
+</table>
+
+<blockquote class="warn">避免过度抽象：单一项目的经验容易被过度泛化。跨项目使用后，应把本表的状态逐条升级或降级，而不是假设一切已就绪。</blockquote>
+
+<p class="foot">Agentic Workflow 标准 v0.1 · 六章正文 + 模板 + 工具 + EndlessSpace 实例<br>本文件由 <code>agentic_workflow</code> 仓库维护，随实践迭代</p>
+
+</main>
+</div>
+</body>
+</html>

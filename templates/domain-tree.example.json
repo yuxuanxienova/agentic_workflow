@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "project": "<示例项目名>",
+  "_note": "功能域树最小可运行示例：1 个项目 + 2 个一级域。battle 展开到 3 级并带叶子；shipyard 直接作为叶子。JSON 无注释，故用 '_note' 字段承载说明；实际使用时 '_note' 可保留也可移除（schema 允许额外字段）。",
+  "roots": [
+    {
+      "id": "battle",
+      "name": "战斗/战术",
+      "level": 1,
+      "surface": "当前节点战术视图：太阳系 + 雷达 + 舰队面板",
+      "code": ["Godot/app/tactical", "Godot/presentation/tactical_hud"],
+      "_note": "一级域 = 产品面上的一个流程/页面集群。此域非叶子，继续下钻。",
+      "children": [
+        {
+          "id": "battle.radar",
+          "name": "雷达与编组",
+          "level": 2,
+          "code": ["Godot/presentation/tactical_hud"],
+          "_note": "二级域：仍非叶子，继续下钻。",
+          "children": [
+            {
+              "id": "battle.radar.diameter",
+              "name": "雷达直径",
+              "level": 3,
+              "files": ["Godot/presentation/tactical_hud/battle_radar_view.gd"],
+              "acceptance": "雷达直径与 Swift BattleRadarHUD 并排一致（L2 review.json accepted）",
+              "leaf": true,
+              "_note": "三级叶子：files ≤3 且 acceptance 非空 → 满足停止规则，停止下钻。",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "shipyard",
+      "name": "船厂",
+      "level": 1,
+      "surface": "船厂页：INFO / UPGRADE 两个页签",
+      "code": ["Godot/presentation/shipyard"],
+      "_note": "第二个一级域：本身已满足叶子停止规则（files ≤3 且 acceptance 非空），可直接作为叶子，无需展开。",
+      "files": ["Godot/presentation/shipyard/shipyard_view.gd"],
+      "acceptance": "三栏比例 0.28/0.30/0.38 在 1398×645 与 2556×1179 两种宽高比下均不越界（L1）",
+      "leaf": true,
+      "children": []
+    }
+  ]
+}

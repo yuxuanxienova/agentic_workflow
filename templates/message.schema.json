@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "message.schema.json",
+  "title": "Agent 消息 (Agent Message)",
+  "description": "agent 间通讯协议的单条消息，用于认领/释放/冲突/提案/交接等协作事件。",
+  "type": "object",
+  "required": ["seq", "ts", "from", "to", "type", "task_id", "body", "refs"],
+  "additionalProperties": true,
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "全局单调递增消息序号。"
+    },
+    "ts": {
+      "type": "number",
+      "description": "发送时间戳（epoch 秒）。"
+    },
+    "from": {
+      "type": "string",
+      "minLength": 1,
+      "description": "发送方 agent_id。"
+    },
+    "to": {
+      "type": "string",
+      "minLength": 1,
+      "description": "接收方 agent_id；广播用 '*'。"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "CLAIM",
+        "RELEASE",
+        "CONFLICT",
+        "PROPOSE",
+        "ACCEPT",
+        "REJECT",
+        "REQUEST_HELP",
+        "INTERRUPT",
+        "HANDOFF",
+        "BLOCKED",
+        "DONE"
+      ],
+      "description": "消息类型：CLAIM 认领 / RELEASE 释放 / CONFLICT 冲突 / PROPOSE 提案 / ACCEPT 接受 / REJECT 拒绝 / REQUEST_HELP 求助 / INTERRUPT 打断 / HANDOFF 交接 / BLOCKED 阻塞 / DONE 完成。"
+    },
+    "task_id": {
+      "type": "string",
+      "description": "关联的子任务 ID。"
+    },
+    "body": {
+      "type": "string",
+      "description": "消息正文（人类可读）。"
+    },
+    "refs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "引用列表：文件路径、commit SHA、证据目录、消息 seq 等。"
+    }
+  }
+}

@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""消息总线 CLI·agent 间通讯（通用 Agentic Workflow 版）。
+
+两个 append-only 文件：
+  <root>/events.jsonl          全局权威事件流（所有消息都落这里）
+  <root>/inbox/<agent_id>.jsonl 定向收件箱（仅点对点消息落这里）
+
+消息结构：
+  {"seq", "ts", "from", "to", "type", "task_id", "body", "refs"}
+
+合法类型：CLAIM / RELEASE / CONFLICT / PROPOSE / ACCEPT / REJECT /
+         REQUEST_HELP / INTERRUPT / HANDOFF / BLOCKED / DONE（不合法退出 2）。
+
+子命令：
+  send --from <id> --to <id> --type <TYPE> [--task <id>] [--body <文本>] [--refs a,b]
+       同时写入 to 的收件箱与 events.jsonl；to=* 表示广播（只写 events.jsonl）。
+  read --agent <id> [--since <seq>]   读取某 agent 的收件箱（默认全部）。
+  tail [--n N]                        读 events.jsonl 尾部 N 条（默认 20）。
+
+append-only 文件用单次 O_APPEND 写入保证原子性（不以 os.replace 重写，避免破坏追加语义）。
+
+默认 <root> = <git 仓库根>/.agentic。
+
+退出码：0 成功；2 用法或数据错误（如非法的消息类型）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+EVENTS_NAME = "events.jsonl"
+INBOX_DIR = "inbox"
+DEFAULT_ROOT = ".agentic"
+BROADCAST = "*"
+MESSAGE_TYPES = (
+    "CLAIM",
+    "RELEASE",
+    "CONFLICT",
+    "PROPOSE",
+    "ACCEPT",
+    "REJECT",
+    "REQUEST_HELP",
+    "INTERRUPT",
+    "HANDOFF",
+    "BLOCKED",
+    "DONE",
+)
+
+
+def default_root() -> Path:
+    """默认协调目录：<git 仓库根>/.agentic；推断失败回退 <cwd>/.agentic。"""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return Path(result.stdout.strip()) / DEFAULT_ROOT
+    except OSError:
+        pass
+    return Path.cwd() / DEFAULT_ROOT
+
+
+def append_jsonl(path: Path, payload: dict) -> None:
+    """单次写入追加一行 JSON（O_APPEND，append-only 文件保持原子追加语义）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(payload, ensure_ascii=False) + "\n"
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(line)
+
+
+def iter_jsonl(path: Path):
+    """逐行解析 JSONL；跳过空行与损坏行。"""
+    if not path.is_file():
+        return
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def next_seq(root: Path) -> int:
+    """扫描 events.jsonl 取最大 seq，返回下一个可用序号。"""
+    last = 0
+    for entry in iter_jsonl(root / EVENTS_NAME):
+        seq = entry.get("seq")
+        if isinstance(seq, int) and seq > last:
+            last = seq
+    return last + 1
+
+
+def now_iso() -> str:
+    """当前时间的 ISO 8601（UTC，秒级）。"""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def fmt_msg(entry: dict) -> str:
+    """把一条消息格式化为单行可读文本。"""
+    refs = ",".join(entry.get("refs") or [])
+    refs_part = f" refs=[{refs}]" if refs else ""
+    return (
+        f"#{entry.get('seq'):<4} {entry.get('ts', '-'):<20} "
+        f"{entry.get('from', '-'):<12}→{entry.get('to', '-'):<12} "
+        f"[{entry.get('type', '-'):<12}] task={entry.get('task_id') or '-':<10} "
+        f"{entry.get('body') or ''}{refs_part}"
+    ).rstrip()
+
+
+def cmd_send(args) -> int:
+    """发送一条消息。"""
+    message_type = args.type.upper()
+    if message_type not in MESSAGE_TYPES:
+        print(f"非法消息类型：{args.type}（合法值：{'/'.join(MESSAGE_TYPES)}）", file=sys.stderr)
+        return 2
+    refs = [item.strip() for item in (args.refs or "").split(",") if item.strip()]
+    entry = {
+        "seq": next_seq(args.root),
+        "ts": now_iso(),
+        "from": args.sender,
+        "to": args.recipient,
+        "type": message_type,
+        "task_id": args.task or None,
+        "body": args.body or "",
+        "refs": refs,
+    }
+    append_jsonl(args.root / EVENTS_NAME, entry)
+    if args.recipient != BROADCAST:
+        append_jsonl(args.root / INBOX_DIR / f"{args.recipient}.jsonl", entry)
+        print(f"✓ 已发送 #{entry['seq']} {message_type} {args.sender}→{args.recipient}（投递收件箱 + 事件流）")
+    else:
+        print(f"✓ 已广播 #{entry['seq']} {message_type} {args.sender}→*（仅事件流）")
+    return 0
+
+
+def cmd_read(args) -> int:
+    """读取某个 agent 的收件箱。"""
+    since = args.since if args.since is not None else 0
+    messages = [entry for entry in iter_jsonl(args.root / INBOX_DIR / f"{args.agent}.jsonl") if entry.get("seq", 0) > since]
+    if args.json:
+        print(json.dumps(messages, ensure_ascii=False, indent=2))
+        return 0
+    if not messages:
+        print(f"（{args.agent} 无新消息）")
+        return 0
+    for entry in messages:
+        print(fmt_msg(entry))
+    return 0
+
+
+def cmd_tail(args) -> int:
+    """读取全局事件流尾部。"""
+    events = list(iter_jsonl(args.root / EVENTS_NAME))
+    tail = events[-args.n :] if args.n > 0 else []
+    if args.json:
+        print(json.dumps(tail, ensure_ascii=False, indent=2))
+        return 0
+    if not tail:
+        print("（事件流为空）")
+        return 0
+    for entry in tail:
+        print(fmt_msg(entry))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """构建 CLI 解析器。"""
+    parser = argparse.ArgumentParser(description="消息总线：agent 间的 CLAIM/CONFLICT/HANDOFF 等事件通讯。")
+    parser.add_argument("--root", type=Path, default=None, help="协调目录（默认 <git 根>/.agentic）")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_send = sub.add_parser("send", help="发送一条消息")
+    p_send.add_argument("--from", dest="sender", required=True, help="发送方 agent ID")
+    p_send.add_argument("--to", dest="recipient", required=True, help="接收方 agent ID，* 表示广播")
+    p_send.add_argument("--type", dest="type", required=True, help=f"消息类型：{'/'.join(MESSAGE_TYPES)}")
+    p_send.add_argument("--task", default=None, help="关联任务 ID（可选）")
+    p_send.add_argument("--body", default=None, help="消息正文（可选）")
+    p_send.add_argument("--refs", default=None, help="引用，逗号分隔（可选）")
+    p_send.set_defaults(func=cmd_send)
+
+    p_read = sub.add_parser("read", help="读取某 agent 的收件箱")
+    p_read.add_argument("--agent", required=True, help="收件方 agent ID")
+    p_read.add_argument("--since", type=int, default=None, help="只读 seq 大于该值的消息")
+    p_read.add_argument("--json", action="store_true", help="以 JSON 输出")
+    p_read.set_defaults(func=cmd_read)
+
+    p_tail = sub.add_parser("tail", help="读全局事件流尾部")
+    p_tail.add_argument("--n", type=int, default=20, help="读取条数（默认 20）")
+    p_tail.add_argument("--json", action="store_true", help="以 JSON 输出")
+    p_tail.set_defaults(func=cmd_tail)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.root is None:
+        args.root = default_root()
+    args.root = Path(args.root)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

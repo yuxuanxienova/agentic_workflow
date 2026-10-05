@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "domain-tree.schema.json",
+  "title": "功能域树 (Domain Tree)",
+  "description": "把项目从产品面下钻到可执行叶子节点的功能域树，最多 4 级。停止规则（必须写进节点语义）：一个节点成为叶子（停止继续下钻）当且仅当它满足『files ≤ 3 且 acceptance 非空』；若 level = 4，则该节点被强制视为叶子（无论 files/acceptance 是否填全）。工具 tools/validate_domains.py 按同一结构校验本文件。",
+  "type": "object",
+  "required": ["version", "project", "roots"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema 版本，必填且当前固定为 1。"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "项目名（用于同一工作区内区分不同项目的域树）。"
+    },
+    "roots": {
+      "type": "array",
+      "description": "一级功能域列表（level = 1）。",
+      "items": { "$ref": "#/definitions/node" }
+    }
+  },
+  "definitions": {
+    "node": {
+      "type": "object",
+      "description": "功能域节点。停止规则：叶子节点须满足『files ≤3 且 acceptance 非空』；level=4 强制为叶子。非叶子节点应继续通过 children 下钻。",
+      "required": ["id", "name", "level"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "节点唯一标识，建议用点号路径表达层级（如 battle.radar.diameter）。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "节点显示名（中文业务名）。"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "层级，1–4 的整数。level=4 时强制为叶子，不再有子节点。"
+        },
+        "surface": {
+          "type": "string",
+          "description": "该域对应的产品面（页面/流程），可空。通常只在一级域填写。"
+        },
+        "code": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "该域覆盖的代码目录或模块（仓库相对路径，可为目录）。"
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "叶子节点的具体改动文件（仓库相对路径）。叶子停止规则要求 files ≤ 3。"
+        },
+        "acceptance": {
+          "type": "string",
+          "description": "叶子节点的唯一一条验收标准。叶子停止规则要求非空。"
+        },
+        "leaf": {
+          "type": "boolean",
+          "description": "是否为叶子节点。为 true 表示停止下钻；为 false 表示仍应通过 children 展开。level=4 时强制为 true。"
+        },
+        "children": {
+          "type": "array",
+          "description": "同结构的子节点数组，递归表达层级。叶子节点应为空数组。",
+          "items": { "$ref": "#/definitions/node" }
+        }
+      }
+    }
+  }
+}

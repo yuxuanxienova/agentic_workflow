@@ -1,0 +1,828 @@
+{
+  "version": 1,
+  "project": "EndlessSpace",
+  "roots": [
+    {
+      "id": "shell",
+      "name": "应用外壳/导航",
+      "level": 1,
+      "surface": "横屏画布外壳：图层租约栈、导航协调、曲速转场、全局主题令牌",
+      "code": [
+        "Godot/presentation/root",
+        "Godot/app/navigation",
+        "Godot/presentation/transitions",
+        "Godot/presentation/theme"
+      ],
+      "children": [
+        {
+          "id": "shell.ui_root",
+          "name": "根画布与安全区",
+          "level": 2,
+          "files": [
+            "Godot/presentation/root/ui_root.gd",
+            "Godot/presentation/root/ui_layer_lease_stack.gd"
+          ],
+          "acceptance": "L1 多比例（1398×645 / 2556×1179）安全区不越界",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "shell.navigation",
+          "name": "页面导航协调",
+          "level": 2,
+          "files": [
+            "Godot/app/navigation/navigation_coordinator.gd"
+          ],
+          "acceptance": "L1 五按钮页面切换序列无残留图层",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "shell.transition",
+          "name": "转场与主题",
+          "level": 2,
+          "files": [
+            "Godot/presentation/transitions/warp_transition_overlay.gd",
+            "Godot/presentation/theme/game_theme.gd",
+            "Godot/presentation/theme/ui_tokens.gd"
+          ],
+          "acceptance": "L1 转场遮罩与主题令牌加载无报错",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "homebase",
+      "name": "主城/基地",
+      "level": 1,
+      "surface": "主城基地总览页与舰队菜单入口",
+      "code": [
+        "Godot/presentation/homebase"
+      ],
+      "children": [
+        {
+          "id": "homebase.overview",
+          "name": "基地总览",
+          "level": 2,
+          "files": [
+            "Godot/presentation/homebase/homebase_view.gd"
+          ],
+          "acceptance": "L2 主城并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "homebase.fleet_menu",
+          "name": "舰队菜单",
+          "level": 2,
+          "files": [
+            "Godot/presentation/homebase/fleet_menu_view.gd"
+          ],
+          "acceptance": "L1 舰队菜单可展开并选中编队",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "tech",
+      "name": "科技",
+      "level": 1,
+      "surface": "科技树页（ladder 滚动 + 节点图标 + 详情面板）",
+      "code": [
+        "Godot/presentation/tech"
+      ],
+      "children": [
+        {
+          "id": "tech.view",
+          "name": "科技树主视图",
+          "level": 2,
+          "files": [
+            "Godot/presentation/tech/tech_view.gd"
+          ],
+          "acceptance": "L2 defense 域并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "tech.weapon_icon",
+          "name": "武器图标",
+          "level": 2,
+          "files": [
+            "Godot/presentation/tech/tech_weapon_icon.gd"
+          ],
+          "acceptance": "L2 武器图标并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "tech.ship_silhouette",
+          "name": "船影轮廓",
+          "level": 2,
+          "files": [
+            "Godot/presentation/tech/ship_path_silhouette.gd"
+          ],
+          "acceptance": "L2 船影并排一致",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "shipyard",
+      "name": "船厂",
+      "level": 1,
+      "surface": "船厂页（三栏 DEPLOYED / PREVIEW / INFO-UPGRADE）",
+      "code": [
+        "Godot/presentation/shipyard",
+        "Godot/domain/shipyard"
+      ],
+      "children": [
+        {
+          "id": "shipyard.layout",
+          "name": "布局模型",
+          "level": 2,
+          "files": [
+            "Godot/presentation/shipyard/shipyard_layout.gd"
+          ],
+          "acceptance": "L1 三比例布局矩阵不错位",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "shipyard.view",
+          "name": "船厂主视图",
+          "level": 2,
+          "files": [
+            "Godot/presentation/shipyard/shipyard_view.gd"
+          ],
+          "acceptance": "L2 INFO + UPGRADE 并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "shipyard.preview_fx",
+          "name": "预览特效",
+          "level": 2,
+          "files": [
+            "Godot/presentation/shipyard/shipyard_preview_fx.gd"
+          ],
+          "acceptance": "L1 预览舰船特效渲染无异常",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "shipyard.inventory",
+          "name": "船厂库存与舰队桥",
+          "level": 2,
+          "files": [
+            "Godot/domain/shipyard/shipyard_inventory.gd",
+            "Godot/domain/shipyard/shipyard_fleet_bridge.gd"
+          ],
+          "acceptance": "L0 库存/上架域名单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "equip",
+      "name": "装备",
+      "level": 1,
+      "surface": "装备页（SHIP LOADOUT：WEAPONS/MODULES 双 tab + 三栏装填）",
+      "code": [
+        "Godot/presentation/equip",
+        "Godot/domain/equip"
+      ],
+      "children": [
+        {
+          "id": "equip.view",
+          "name": "装备主视图",
+          "level": 2,
+          "files": [
+            "Godot/presentation/equip/equip_view.gd"
+          ],
+          "acceptance": "L2 三栏并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "equip.grid",
+          "name": "槽位网格与导轨",
+          "level": 2,
+          "files": [
+            "Godot/presentation/equip/blueprint_grid.gd",
+            "Godot/presentation/equip/slot_guides.gd"
+          ],
+          "acceptance": "L1 槽位网格渲染与导轨对齐",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "equip.icons",
+          "name": "装备图标",
+          "level": 2,
+          "files": [
+            "Godot/presentation/equip/weapon_icon.gd",
+            "Godot/presentation/equip/equip_icon_catalog.gd"
+          ],
+          "acceptance": "L1 图标资源路由无缺项",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "equip.bootstrap",
+          "name": "军械库启动",
+          "level": 2,
+          "files": [
+            "Godot/domain/equip/armory_bootstrap.gd"
+          ],
+          "acceptance": "L1 legacy 导入失败回退 starter 后三栏非空",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "equip.service",
+          "name": "装备服务",
+          "level": 2,
+          "files": [
+            "Godot/domain/equip/equip_service.gd"
+          ],
+          "acceptance": "L0 装填能量守卫单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "equip.importer",
+          "name": "legacy 军械库导入",
+          "level": 2,
+          "files": [
+            "Godot/domain/equip/legacy_armory_importer.gd"
+          ],
+          "acceptance": "L0 invalid_slot 跳过而非整包失败",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "market",
+      "name": "市场",
+      "level": 1,
+      "surface": "市场页（商品买卖与库存波动）",
+      "code": [
+        "Godot/presentation/market",
+        "Godot/domain/economy"
+      ],
+      "children": [
+        {
+          "id": "market.view",
+          "name": "市场主视图",
+          "level": 2,
+          "files": [
+            "Godot/presentation/market/market_view.gd"
+          ],
+          "acceptance": "L2 市场并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "market.broker",
+          "name": "交易与库存",
+          "level": 2,
+          "files": [
+            "Godot/domain/economy/market_broker.gd",
+            "Godot/domain/economy/market_stock.gd"
+          ],
+          "acceptance": "L0 买卖结算与库存更新单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "spaceport",
+      "name": "太空港",
+      "level": 1,
+      "surface": "太空港页（停靠着陆与着陆报告）",
+      "code": [
+        "Godot/presentation/spaceport",
+        "Godot/domain/economy"
+      ],
+      "children": [
+        {
+          "id": "spaceport.view",
+          "name": "太空港与着陆报告",
+          "level": 2,
+          "files": [
+            "Godot/presentation/spaceport/spaceport_view.gd",
+            "Godot/presentation/spaceport/landing_report_view.gd"
+          ],
+          "acceptance": "L2 太空港并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "spaceport.session",
+          "name": "太空港会话",
+          "level": 2,
+          "files": [
+            "Godot/domain/economy/spaceport_session.gd",
+            "Godot/domain/economy/spaceport_catalog.gd"
+          ],
+          "acceptance": "L0 停靠会话与目录单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "store",
+      "name": "商城",
+      "level": 1,
+      "surface": "商城页（充值 + 新手礼包）",
+      "code": [
+        "Godot/presentation/store"
+      ],
+      "children": [
+        {
+          "id": "store.recharge",
+          "name": "充值",
+          "level": 2,
+          "files": [
+            "Godot/presentation/store/recharge_view.gd"
+          ],
+          "acceptance": "L2 充值页并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "store.starter_pack",
+          "name": "新手礼包",
+          "level": 2,
+          "files": [
+            "Godot/presentation/store/starter_pack_view.gd"
+          ],
+          "acceptance": "L2 新手礼包页并排一致",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "battle",
+      "name": "战斗/战术",
+      "level": 1,
+      "surface": "当前星系战术视图（太阳系 + 3D 舰船 + 雷达 + HUD），30 节点星图靠其 MAP 按钮进入",
+      "code": [
+        "Godot/app/tactical",
+        "Godot/presentation/tactical_hud",
+        "Godot/presentation/helios",
+        "Godot/presentation/environment"
+      ],
+      "children": [
+        {
+          "id": "battle.shell",
+          "name": "战术视图壳",
+          "level": 2,
+          "files": [
+            "Godot/app/tactical/tactical_node_shell.gd"
+          ],
+          "acceptance": "L2 默认取景与 Swift 同操作一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.render",
+          "name": "3D 舰船层",
+          "level": 2,
+          "files": [
+            "Godot/presentation/helios/tactical_3d_layer.gd"
+          ],
+          "acceptance": "L1 移动/转向序列朝向与 Swift 约定一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.camera",
+          "name": "相机取景",
+          "level": 2,
+          "files": [
+            "Godot/presentation/helios/tactical_camera_mapper.gd"
+          ],
+          "acceptance": "L2 舰体大小（50×size）并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.backdrop",
+          "name": "星系背景",
+          "level": 2,
+          "files": [
+            "Godot/presentation/environment/tactical_backdrop.gd"
+          ],
+          "acceptance": "L2 视差背景并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.iff",
+          "name": "敌我识别 IFF",
+          "level": 2,
+          "files": [
+            "Godot/presentation/tactical_hud/world_feedback_layer.gd"
+          ],
+          "acceptance": "L2 环/舰比例 0.56 并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.radar",
+          "name": "雷达与五按钮",
+          "level": 2,
+          "files": [
+            "Godot/presentation/tactical_hud/battle_radar_view.gd"
+          ],
+          "acceptance": "L2 雷达尺寸/红点位置并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.combat",
+          "name": "开火链路",
+          "level": 2,
+          "files": [
+            "Godot/app/tactical/tactical_combat_controller.gd",
+            "Godot/domain/tactical/hostile_engagement_planner.gd"
+          ],
+          "acceptance": "L1 有敌舰时接敌→开火→命中且 ship_state 变化",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.movement",
+          "name": "舰队移动与转向",
+          "level": 2,
+          "files": [
+            "Godot/domain/tactical/fleet_movement_engine.gd",
+            "Godot/app/tactical/tactical_command_controller.gd"
+          ],
+          "acceptance": "L1 移动指令序列运动学无顿挫",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "battle.hud",
+          "name": "战术 HUD",
+          "level": 2,
+          "surface": "右上/右缘/左下 HUD 控件（编组槽条、缩放、状态盘）",
+          "code": [
+            "Godot/presentation/tactical_hud"
+          ],
+          "leaf": false,
+          "children": [
+            {
+              "id": "battle.hud.group_rail",
+              "name": "编组槽条",
+              "level": 3,
+              "files": [
+                "Godot/presentation/tactical_hud/battle_group_rail.gd",
+                "Godot/presentation/tactical_hud/battle_group_slot_visual.gd"
+              ],
+              "acceptance": "L2 编组槽 1-5 与 +/- 缩放尺寸并排一致",
+              "leaf": true,
+              "children": []
+            },
+            {
+              "id": "battle.hud.zoom",
+              "name": "缩放控件",
+              "level": 3,
+              "files": [
+                "Godot/presentation/tactical_hud/zoom_controls_view.gd"
+              ],
+              "acceptance": "L2 缩放控件命中半径（44pt→66px）并排一致",
+              "leaf": true,
+              "children": []
+            },
+            {
+              "id": "battle.hud.status_plate",
+              "name": "状态盘",
+              "level": 3,
+              "files": [
+                "Godot/presentation/tactical_hud/system_status_plate.gd",
+                "Godot/presentation/tactical_hud/fleet_status_plate.gd"
+              ],
+              "acceptance": "L2 节点卡与 GROUP 1 面板尺寸并排一致",
+              "leaf": true,
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "strategic_map",
+      "name": "星图",
+      "level": 1,
+      "surface": "30 节点星图（跨星系路由与节点选中）",
+      "code": [
+        "Godot/presentation/strategic_map",
+        "Godot/app/strategic_map",
+        "Godot/domain/galaxy"
+      ],
+      "children": [
+        {
+          "id": "strategic_map.view",
+          "name": "星图主视图",
+          "level": 2,
+          "files": [
+            "Godot/presentation/strategic_map/strategic_map_view.gd"
+          ],
+          "acceptance": "L2 星图并排一致",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "strategic_map.interaction",
+          "name": "星图交互",
+          "level": 2,
+          "files": [
+            "Godot/app/strategic_map/strategic_map_interaction.gd"
+          ],
+          "acceptance": "L1 节点点击选中/跳转序列",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "strategic_map.layout",
+          "name": "星图布局",
+          "level": 2,
+          "files": [
+            "Godot/domain/galaxy/strategic_map_layout.gd"
+          ],
+          "acceptance": "L1 30 节点布局坐标断言",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "strategic_map.routing",
+          "name": "星图路由",
+          "level": 2,
+          "files": [
+            "Godot/domain/galaxy/galaxy_graph.gd",
+            "Godot/domain/galaxy/galaxy_pathfinder.gd"
+          ],
+          "acceptance": "L0 星系图与寻路单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "fleet",
+      "name": "舰队编成",
+      "level": 1,
+      "surface": "舰队编队/阵型与存在态展示",
+      "code": [
+        "Godot/presentation/fleet",
+        "Godot/domain/fleet"
+      ],
+      "children": [
+        {
+          "id": "fleet.presentation",
+          "name": "舰队表现层",
+          "level": 2,
+          "files": [
+            "Godot/presentation/fleet/fleet_presentation_layer.gd"
+          ],
+          "acceptance": "L1 编队渲染与选中高亮",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "fleet.state",
+          "name": "舰队状态",
+          "level": 2,
+          "files": [
+            "Godot/domain/fleet/fleet_state.gd",
+            "Godot/domain/fleet/fleet_store.gd"
+          ],
+          "acceptance": "L0 舰队状态读写单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "fleet.formation",
+          "name": "阵型布局",
+          "level": 2,
+          "files": [
+            "Godot/domain/fleet/formation_layout.gd"
+          ],
+          "acceptance": "L0 阵型槽位排布单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "war",
+      "name": "势力/战争",
+      "level": 1,
+      "surface": "势力战争前线、NPC 巡逻与离屏交战推进",
+      "code": [
+        "Godot/domain/war"
+      ],
+      "children": [
+        {
+          "id": "war.engine",
+          "name": "战争推演",
+          "level": 2,
+          "files": [
+            "Godot/domain/war/war_engine.gd",
+            "Godot/domain/war/war_state.gd",
+            "Godot/domain/war/war_front_manager.gd"
+          ],
+          "acceptance": "L0 战争推进与前线单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "war.patrol",
+          "name": "NPC 巡逻/离屏交战",
+          "level": 2,
+          "files": [
+            "Godot/domain/war/npc_patrol_planner.gd",
+            "Godot/domain/war/offscreen_skirmish_resolver.gd"
+          ],
+          "acceptance": "L0 巡逻规划与离屏战斗结算单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "war.transit",
+          "name": "行军与驻防",
+          "level": 2,
+          "files": [
+            "Godot/domain/war/war_transit_system.gd",
+            "Godot/domain/war/garrison_hydrator.gd",
+            "Godot/domain/war/fleet_demand.gd"
+          ],
+          "acceptance": "L0 行军链路与驻防注水单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "economy",
+      "name": "经济",
+      "level": 1,
+      "surface": "现金/声望与舰队开销等经济基础存储",
+      "code": [
+        "Godot/domain/economy"
+      ],
+      "children": [
+        {
+          "id": "economy.cash",
+          "name": "现金与声望",
+          "level": 2,
+          "files": [
+            "Godot/domain/economy/cash_store.gd",
+            "Godot/domain/economy/reputation_store.gd"
+          ],
+          "acceptance": "L0 现金/声望增减单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "economy.fleet_economy",
+          "name": "舰队经济",
+          "level": 2,
+          "files": [
+            "Godot/domain/economy/fleet_economy.gd"
+          ],
+          "acceptance": "L0 舰队维护开销单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "progression",
+      "name": "进度系统",
+      "level": 1,
+      "surface": "科技目录/研究进度/条件解锁与掉落",
+      "code": [
+        "Godot/domain/progression"
+      ],
+      "children": [
+        {
+          "id": "progression.tech",
+          "name": "科技进度",
+          "level": 2,
+          "files": [
+            "Godot/domain/progression/tech_catalog.gd",
+            "Godot/domain/progression/tech_progress.gd"
+          ],
+          "acceptance": "L0 科技目录与研究进度单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "progression.loot",
+          "name": "掉落与条件",
+          "level": 2,
+          "files": [
+            "Godot/domain/progression/tech_loot_service.gd",
+            "Godot/domain/progression/conditions_store.gd"
+          ],
+          "acceptance": "L0 掉落判定与条件解锁单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "persistence",
+      "name": "存档",
+      "level": 1,
+      "surface": "原子存档读写与 legacy 存档迁移导入",
+      "code": [
+        "Godot/domain/persistence"
+      ],
+      "children": [
+        {
+          "id": "persistence.atomic",
+          "name": "原子存档",
+          "level": 2,
+          "files": [
+            "Godot/domain/persistence/atomic_file.gd",
+            "Godot/domain/persistence/legacy_save_bundle.gd"
+          ],
+          "acceptance": "L0 原子写与存档包解析单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "persistence.migration",
+          "name": "迁移协调",
+          "level": 2,
+          "files": [
+            "Godot/domain/persistence/legacy_migration_coordinator.gd",
+            "Godot/domain/persistence/legacy_migration_ledger.gd"
+          ],
+          "acceptance": "L0 迁移协调与账本单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "persistence.importers",
+          "name": "legacy 导入器（进度/经济）",
+          "level": 2,
+          "files": [
+            "Godot/domain/persistence/legacy_tech_importer.gd",
+            "Godot/domain/persistence/legacy_cash_importer.gd",
+            "Godot/domain/persistence/legacy_reputation_importer.gd"
+          ],
+          "acceptance": "L0 科技/现金/声望导入单测通过",
+          "leaf": true,
+          "children": []
+        },
+        {
+          "id": "persistence.market_stock",
+          "name": "legacy 市场库存导入",
+          "level": 2,
+          "files": [
+            "Godot/domain/persistence/legacy_market_stock_importer.gd"
+          ],
+          "acceptance": "L0 市场库存导入单测通过",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "devtools",
+      "name": "开发者工具",
+      "level": 1,
+      "surface": "开发者调试页面",
+      "code": [
+        "Godot/presentation/devtools"
+      ],
+      "children": [
+        {
+          "id": "devtools.view",
+          "name": "调试页",
+          "level": 2,
+          "files": [
+            "Godot/presentation/devtools/devtools_view.gd"
+          ],
+          "acceptance": "L1 调试页可打开且条目可交互",
+          "leaf": true,
+          "children": []
+        }
+      ]
+    }
+  ]
+}

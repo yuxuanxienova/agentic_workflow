@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "lock.schema.json",
+  "title": "文件锁 (File Lock)",
+  "description": "单个文件/路径的排他锁。同一路径同一时刻只允许一个 owner 持有；热点文件在任何波次都串行。",
+  "type": "object",
+  "required": ["version", "path", "owner", "task_id", "acquired_ts", "ttl", "seq"],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema 版本，固定为 1。"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "被锁定文件的仓库相对路径（可为文件或目录前缀）。"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "description": "持有者 agent_id。"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "持有该锁的子任务 ID（锁随任务完成而释放）。"
+    },
+    "acquired_ts": {
+      "type": "number",
+      "description": "加锁时间戳（epoch 秒）。"
+    },
+    "ttl": {
+      "type": "number",
+      "minimum": 0,
+      "description": "存活时长（秒）。超过 acquired_ts + ttl 视为陈旧锁，可被接管。"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "单调递增序号，用于检测并发抢占。"
+    }
+  }
+}
