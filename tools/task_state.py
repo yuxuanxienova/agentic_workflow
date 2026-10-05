@@ -58,7 +58,9 @@ BLOCKABLE = {"pending", "claimed", "active", "verify", "blocked"}
 FAILABLE = {"pending", "claimed", "active", "verify", "blocked"}
 
 LEVELS = ("L0", "L1", "L2")
-LEVEL_RE = re.compile(r"\b(L[012])\b")
+# 验收等级只认「验收」列**开头**的 L0/L1/L2：行文中提及的等级（如「非 L2」「L2 待…」）不算数。
+# 缺省 L0。约定：计划文档「验收」列应以 L0/L1/L2 + 空格开头。
+LEVEL_HEAD_RE = re.compile(r"\s*(L[012])\b")
 EVIDENCE_RE = re.compile(r"^(L[012]):(.+)$")
 TASK_ID_RE = re.compile(r"^[A-Z]+\d+-\d+$")
 OWNERSHIP_HEADER = "改动文件（仓库相对路径）"
@@ -223,9 +225,9 @@ def parse_plan(plan_path: Path) -> dict[str, dict]:
         if ACCEPTANCE_HEADER in headers:
             idx = headers.index(ACCEPTANCE_HEADER)
             if idx < len(cells):
-                found = LEVEL_RE.findall(cells[idx])
+                found = LEVEL_HEAD_RE.match(cells[idx])
                 if found:
-                    level = max(found)
+                    level = found.group(1)
         title = cells[1] if len(cells) > 1 else ""
 
         tasks[task_id] = {
