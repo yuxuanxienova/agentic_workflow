@@ -26,6 +26,9 @@
 身份（不可区分即不可协调）：--agent 必须是 `<厂商>-<会话/实例>`，如 `claude-endlessspace-d5`、
 `codex-1`；子 agent 追加 `/<名>`，如 `claude-endlessspace-d5/e2`。裸厂商名（claude/codex/trae…）拒绝。
 
+认领软提示（灯不是门）：claim/start 照常成功，但若①该任务已被别的 agent 持有，或②按计划「改动文件」
+列与别的 agent 持有中的任务重叠，则打印 ⚠ 并经 bus.py 向对方发 CONFLICT。
+
 视图自动刷新：每次写事件后自动重生成 <root>/tasks/{board,gantt,reconcile}.md。计划路径取 --plan，
 缺省读 <root>/tasks/config.json 的 "plan"（仓库相对路径）；都没有则跳过刷新并提示。
 
@@ -392,10 +395,75 @@ def note_text(args) -> str:
                                  "；".join(legacy)) if x)
 
 
+HOLDING_STATES = {"claimed", "active", "verify", "blocked"}
+
+
+def current_holders(events: list[dict]) -> dict[str, str]:
+    """{任务: 当前持有者}。最近一次认领/开工（→claimed/active）的 agent 成为持有者；终态清空。"""
+    holders: dict[str, str] = {}
+    for entry in events:
+        task, to_state, agent = entry.get("task"), entry.get("to"), entry.get("agent")
+        if not task:
+            continue
+        if to_state in TERMINAL or to_state == "pending":
+            holders.pop(task, None)
+        elif to_state in ("claimed", "active") and agent:
+            holders[task] = agent
+    return holders
+
+
+def claim_warnings(args, task: str, states: dict[str, str], holders: dict[str, str]) -> list[tuple[str, str]]:
+    """认领时的软提示：[(对方 agent, 提示文本)]。只提醒，不拦截。"""
+    warnings: list[tuple[str, str]] = []
+    holder = holders.get(task)
+    if holder and holder != args.agent and states.get(task) in HOLDING_STATES:
+        warnings.append((holder, f"{task} 目前由 {holder} 持有（{states[task]}），{args.agent} 也认领了它；请发 HANDOFF/RELEASE 对齐归属"))
+    plan_path = resolve_plan(args)
+    if plan_path is None or not plan_path.is_file():
+        return warnings
+    plan = parse_plan(plan_path)
+    mine = plan.get(task, {}).get("files") or []
+    if not mine:
+        return warnings
+    shared_files = _ownership_module().shared_files
+    for other, other_agent in sorted(holders.items()):
+        if other == task or other_agent == args.agent or states.get(other) not in HOLDING_STATES:
+            continue
+        hits = shared_files(mine, plan.get(other, {}).get("files") or [])
+        if hits:
+            warnings.append((other_agent, f"{task} 与 {other}（{other_agent} 持有）改动文件重叠：{', '.join(hits)}；请串行或归同一 agent"))
+    return warnings
+
+
+def _ownership_module():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import check_file_ownership
+    return check_file_ownership
+
+
+def notify_conflicts(args, task: str, warnings: list[tuple[str, str]]) -> None:
+    """打印警告并经总线给对方发 CONFLICT；对方 ID 不合法（如旧日志里的裸 claude）则只打印。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import bus
+    for other_agent, text in warnings:
+        print(f"⚠ {text}", file=sys.stderr)
+        if bus.bad_agent_id(other_agent):
+            print(f"  （{other_agent} 不是合法 agent ID，未投递总线，请人工联系）", file=sys.stderr)
+            continue
+        message = argparse.Namespace(
+            root=args.root, sender=args.agent, recipient=other_agent, type="CONFLICT",
+            task=task, body=text, refs=task,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            bus.cmd_send(message)
+        print(f"  → 已向 {other_agent} 发送 CONFLICT（bus.py read --agent {other_agent} --unread）", file=sys.stderr)
+
+
 def cmd_transition(args, kind: str) -> int:
     """claim/start/submit/done 的通用转移执行（允许前跳，无验收门）。"""
     root: Path = args.root
-    states, _, _ = reduce_states(load_events(root))
+    events = load_events(root)
+    states, _, _ = reduce_states(events)
     current = states.get(args.task, "pending")
     target = LINEAR_TARGETS[kind]
     if not linear_allowed(current, target):
@@ -414,6 +482,10 @@ def cmd_transition(args, kind: str) -> int:
         note=note_text(args),
     )
     print(f"✓ {args.task}: {current} → {target}  #{entry['seq']}  agent={args.agent}")
+    if kind in ("claim", "start"):
+        warnings = claim_warnings(args, args.task, states, current_holders(events))
+        if warnings:
+            notify_conflicts(args, args.task, warnings)
     return 0
 
 

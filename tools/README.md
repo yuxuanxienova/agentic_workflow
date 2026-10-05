@@ -145,6 +145,10 @@ python3 tools/task_state.py --plan $PLAN seed baseline.json   # 审计收口：�
 
 `--note` 是自由文本；兼容旧写法 `--evidence LEVEL:PATH`（折叠成路径串并入备注显示，**不校验**）。
 
+**认领软提示**（灯不是门）：`claim`/`start` 照常成功；若该任务已被别的 agent 持有，或按计划「改动文件」列
+与别的 agent 持有中的任务重叠，则打印 `⚠` 并经 `bus.py` 给对方发 `CONFLICT`。持有者 = 最近一次 claim/start
+的 agent，done/failed 后清空。对方 ID 不合法（旧日志里的裸 `claude`）时只打印，需人工联系。
+
 **视图自动刷新**：每次写事件（claim/start/submit/done/block/fail/unblock/revoke/seed）成功后自动重生成
 `<root>/tasks/{board,gantt,reconcile}.md`。计划路径取 `--plan`，缺省读 `<root>/tasks/config.json`：
 
