@@ -12,7 +12,7 @@
 | --- | --- |
 | [`agentic_workflow.html`](agentic_workflow.html) | **标准正文**（本文档）：六章 a–f + 图示 + EndlessSpace 实例 |
 | [`templates/`](templates/) | 域树 schema、任务表、所有权矩阵、验收 L0/L1/L2、HANDOFF，及 3 个 JSON Schema |
-| [`tools/`](tools/) | 5 个可执行 CLI（纯标准库）：重叠校验 / 注册表 / 文件锁 / 消息总线 / 域树校验 |
+| [`tools/`](tools/) | 6 个可执行 CLI（纯标准库）：重叠校验 / 注册表 / 文件锁 / 消息总线 / 域树校验 / **任务状态跟踪** |
 | [`examples/endlessspace-device-parity/`](examples/endlessspace-device-parity/) | 完整运行示例：16 个一级域、48 个子任务、10 条并行链、W1–W8 波次 |
 
 ## 六章
