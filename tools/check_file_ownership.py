@@ -15,6 +15,12 @@
   # 只看某个任务会碰哪些文件
   python3 tools/check_file_ownership.py --explain P4-2
 
+  # 校验车道表：任务全覆盖、无环、跨车道共享文件已被同步点排序（见 lanes.py）
+  python3 tools/check_file_ownership.py --plan PLAN.md --lanes
+
+  # 打印按文件重叠合并的链组（规划车道时用来装箱）
+  python3 tools/check_file_ownership.py --plan PLAN.md --components
+
   # 自定义计划文档 / 列标题 / 任务 ID 正则
   python3 tools/check_file_ownership.py --plan ./PLAN.md --header '改动文件' \
       --id-pattern '^T-\\d+$' T-1 T-2
@@ -187,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="打印全量矩阵与所有现存重叠对（不判错）")
     parser.add_argument("--explain", metavar="ID", help="打印某个任务将改动的文件")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出冲突结果")
+    parser.add_argument("--lanes", action="store_true", help="校验车道表与同步点（跨车道共享文件必须已排序）")
+    parser.add_argument("--components", action="store_true", help="打印按文件重叠合并的链组")
     args = parser.parse_args(argv)
 
     plan = args.plan if args.plan is not None else DEFAULT_PLAN
@@ -208,6 +216,12 @@ def main(argv: list[str] | None = None) -> int:
     if not ownership:
         print(f"未能从 {plan} 解析出所有权矩阵（列标题：{args.header}）", file=sys.stderr)
         return 2
+
+    if args.lanes or args.components:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import lanes as lanes_mod
+        forwarded = ["--plan", str(plan)] + (["--components"] if args.components else [])
+        return lanes_mod.main(forwarded)
 
     if args.explain:
         files = ownership.get(args.explain)

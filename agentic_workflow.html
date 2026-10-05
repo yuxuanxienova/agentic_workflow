@@ -94,7 +94,7 @@
     <li><a href="#s1">总览：一条流水线</a></li>
     <li><a href="#a">项目解读与功能域树</a></li>
     <li><a href="#b">任务解读与拆分</a></li>
-    <li><a href="#c">并行模型（矩阵+波次）</a></li>
+    <li><a href="#c">并行模型（链→车道→波次）</a></li>
     <li><a href="#d">Agent 通讯协议</a></li>
     <li><a href="#e">岗位与能力矩阵</a></li>
     <li><a href="#f">Git 分支/worktree 规范</a></li>
@@ -111,7 +111,7 @@
 
 <h1>Agentic Workflow 标准</h1>
 <p class="lede">一套<b>独立于项目</b>的多 Agent 协作框架：把模糊的大目标，拆成可并行、可验收、且<b>不会互相踩文件</b>的任务网络。</p>
-<p class="meta">v0.1 · 运行示例：EndlessSpace 真机四域修复 · 本仓库自身即一个 git 项目</p>
+<p class="meta">v0.2（2026-10-05 增补链·车道·波次）· 运行示例：EndlessSpace 真机四域修复 · 本仓库自身即一个 git 项目</p>
 
 <!-- ============ 0 ============ -->
 <h2 id="s0"><span class="k">0</span>这是什么 / 怎么用</h2>
@@ -178,8 +178,8 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
     <text x="116" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">按文件聚合 → 串行链</text>
 
     <rect x="248" y="128" width="196" height="60" rx="10" fill="#1a1630" stroke="#3a3158"/>
-    <text x="346" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑥ 跨域波次 + 甘特</text>
-    <text x="346" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">波内零文件重叠</text>
+    <text x="346" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑥ 车道 + 同步点</text>
+    <text x="346" y="173" fill="#8fa6c0" text-anchor="middle" font-size="10.5">工具推导波次/甘特</text>
 
     <rect x="478" y="128" width="196" height="60" rx="10" fill="#1a1630" stroke="#3a3158"/>
     <text x="576" y="154" fill="#b39dff" text-anchor="middle" font-size="12">⑦ 并行执行</text>
@@ -331,7 +331,28 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 <p>模板见 <code>templates/task-breakdown.md</code>；实例见 <code>examples/endlessspace-device-parity/tasks.md</code>。</p>
 
 <!-- ============ C ============ -->
-<h2 id="c"><span class="k">c</span>并行模型：文件所有权矩阵 + 跨域波次 <span class="status bt">battle-tested</span></h2>
+<h2 id="c"><span class="k">c</span>并行模型：链 → 车道 → 波次 <span class="status bt">battle-tested</span></h2>
+
+<h3>先分清三个概念（v0.2，2026-10-05）</h3>
+<p>链、车道、波次<b>不是三选一</b>，它们回答三个不同的问题，按固定顺序产生：</p>
+<table>
+  <thead><tr><th>概念</th><th>回答的问题</th><th>怎么来的</th><th>性质</th><th>谁产出</th></tr></thead>
+  <tbody>
+    <tr><td><b>链</b></td><td>哪些任务<b>不能同时做</b></td><td>改同一文件的任务 = 一条串行链；从「改动文件」列自动算</td><td><b>约束</b>（客观事实，不选择）</td><td>工具（<code>--components</code>）</td></tr>
+    <tr><td><b>车道</b></td><td><b>谁来做</b></td><td>先定 agent 数 N，把链打包进 N 条车道；一个 agent 一条车道，按顺序从头做到尾</td><td><b>分配</b>（唯一派工单位）</td><td>Planner 写车道表，工具校验</td></tr>
+    <tr><td><b>波次</b></td><td><b>什么时候做</b></td><td>由「车道顺序 + 同步点」按最长路径推导的时间槽</td><td><b>时间表</b>（派生物，不手写）</td><td>工具（<code>gantt</code>）</td></tr>
+  </tbody>
+</table>
+<blockquote class="warn"><strong>v0.1 的漏洞：</strong>默认「agent 数 ≥ 链数」，于是波次顺手当了派工单。第一次 EndlessSpace 17 链配 17 agent 时没暴露；第二轮 104 任务、60+ 条单任务链，W1「峰值」≈35，没人知道谁领什么；按波次抢任务还会把同一条链拆给不同 agent（P7-4 归 A、P7-5 被 B 抢到，同一文件反复交接）。缺的是第 ⑤ 与第 ⑥ 步之间的「<b>把链装进 N 个 agent</b>」。</blockquote>
+<h4>修订后的四条规则</h4>
+<ol>
+  <li><b>链</b>：工具自动算。一个任务跨两条链的文件 → 两链合并为一个连通组（<code>check_file_ownership.py --components</code> 打印）。</li>
+  <li><b>车道</b>：唯一派工单位。计划里写车道表（<code>| 车道 | agent | 任务顺序 | 说明 |</code>）；一条链尽量整条归一个车道。<b>车道之间允许共享文件，但共享文件上的跨车道任务必须被同步点排出先后</b>——实测最大连通组有 28 个任务，要求车道完全不相交只会塌成单人。</li>
+  <li><b>波次</b>：降级为派生物。跨车道依赖写进同步点表（<code>| 后（等待方） | 先（被等任务） | 原因 |</code>），工具按单位工期最长路径推导 W1…Wn；计划里不再手写波次行。</li>
+  <li><b>工具</b>：<code>check_file_ownership.py --lanes</code> 校验（全覆盖 / 无环 / 跨车道共享文件已排序，否则退出 1）；<code>task_state.py claim</code> 在任务不属于自己车道、或前置未 done 时打 ⚠；<code>gantt</code> 输出「车道 × 推导波次」+ 同步点状态；<code>board</code> 带车道列。</li>
+</ol>
+<p>流程因此变成：<b>工具算链 → 人定 N → Planner 装车道 + 写同步点 → 工具校验并推导波次 → 每个 agent 拿一条车道做到底，只在同步点等人</b>。下文「矩阵」「波次」两节保留 v0.1 原文作为第一次实战的记录。</p>
+
 
 <h3>为什么按「功能域」分批是错的</h3>
 <blockquote class="danger">
@@ -954,7 +975,8 @@ alwaysApply: true
 <table>
   <thead><tr><th>工具</th><th>一句话</th><th>典型用法</th></tr></thead>
   <tbody>
-    <tr><td><code>check_file_ownership.py</code></td><td>同波任务文件重叠 → 有重叠退出 1</td><td><code>--plan PLAN.md P1-1 P2-1 P3-1 P4-7</code></td></tr>
+    <tr><td><code>check_file_ownership.py</code></td><td>任务集文件重叠 → 有重叠退出 1；<code>--lanes</code> 校验车道表，<code>--components</code> 打印链组</td><td><code>--plan PLAN.md --lanes</code></td></tr>
+    <tr><td><code>lanes.py</code></td><td>车道/同步点解析、校验、波次推导（被上两个工具复用）</td><td><code>--plan PLAN.md</code></td></tr>
     <tr><td><code>agent_registry.py</code></td><td>谁在干什么、谁持有哪个文件</td><td><code>who-owns path</code> · <code>stale --ttl 900</code></td></tr>
     <tr><td><code>file_lock.py</code></td><td>文件级 CAS 锁，防两人同改一文件</td><td><code>acquire path --agent a1 --task P1-1</code></td></tr>
     <tr><td><code>bus.py</code></td><td>agent 间消息（冲突/请求/交接/中断）</td><td><code>send --from a2 --to a1 --type CONFLICT</code></td></tr>
@@ -1030,6 +1052,7 @@ python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLA
   <tbody>
     <tr><td>域树 / 任务拆分 / 所有权矩阵 / 波次 / 甘特（a–c、f）</td><td><span class="status bt">battle-tested</span></td><td>在 EndlessSpace 上完整跑通并修正过一轮</td></tr>
     <tr><td>重叠校验 / 域树校验工具</td><td><span class="status bt">battle-tested</span></td><td>对真实 48 任务计划跑出正确结果</td></tr>
+    <tr><td>车道 + 同步点 + 推导波次（c，v0.2）</td><td><span class="status th">部分验证</span></td><td>工具与负向校验已跑通（EndlessSpace plan2：10 车道 / 104 任务 / 24 同步点 / 推导 15 波）；多 agent 按车道实跑尚待验证</td></tr>
     <tr><td>文件锁 / 注册表 / 消息总线（d）</td><td><span class="status th">部分验证</span></td><td>CLI 已自测闭环；<b>多 agent 真实并发</b>尚未在跨厂商场景验证</td></tr>
     <tr><td>协作式中断 / 强抢占（d）</td><td><span class="status th">理论</span></td><td>跨厂商无内核级抢占，依赖 agent 服从规范</td></tr>
     <tr><td>Reviewer / Integrator 岗位（e）</td><td><span class="status th">设计</span></td><td>已定岗与甘特节点，尚未启用</td></tr>
@@ -1040,7 +1063,7 @@ python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLA
 
 <blockquote class="warn">避免过度抽象：单一项目的经验容易被过度泛化。跨项目使用后，应把本表的状态逐条升级或降级，而不是假设一切已就绪。</blockquote>
 
-<p class="foot">Agentic Workflow 标准 v0.1 · a–h 八章正文 + 模板 + 工具 + EndlessSpace 实例<br>本文件由 <code>agentic_workflow</code> 仓库维护，随实践迭代</p>
+<p class="foot">Agentic Workflow 标准 v0.2 · a–h 八章正文 + 模板 + 工具 + EndlessSpace 实例<br>本文件由 <code>agentic_workflow</code> 仓库维护，随实践迭代</p>
 
 </main>
 </div>

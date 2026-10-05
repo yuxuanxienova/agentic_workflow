@@ -20,14 +20,18 @@
   block / fail                                        旁支（--reason）
   seed <baseline.json>                    一次性灌基线（审计收口用）
   status <task> / list                    查状态
-  board / gantt / reconcile               生成视图（board=看板，gantt=链×波次，reconcile=对账）
+  board / gantt / reconcile               生成视图（board=看板，gantt=车道×波次，reconcile=对账）
   log [--task T] [--n N]                  看事件流
 
 身份（不可区分即不可协调）：--agent 必须是 `<厂商>-<会话/实例>`，如 `claude-endlessspace-d5`、
 `codex-1`；子 agent 追加 `/<名>`，如 `claude-endlessspace-d5/e2`。裸厂商名（claude/codex/trae…）拒绝。
 
 认领软提示（灯不是门）：claim/start 照常成功，但若①该任务已被别的 agent 持有，或②按计划「改动文件」
-列与别的 agent 持有中的任务重叠，则打印 ⚠ 并经 bus.py 向对方发 CONFLICT。
+列与别的 agent 持有中的任务重叠，或③任务所在车道归别的 agent，则打印 ⚠ 并经 bus.py 向对方发 CONFLICT；
+④前置任务（车道内上一个 + 同步点）未 done 时只打印 ⚠。
+
+链 / 车道 / 波次（见 lanes.py）：链是工具算的约束，车道是唯一派工单位，波次由车道顺序 + 同步点推导。
+计划有车道表时 gantt 输出「车道 × 推导波次」；没有时回退旧的手写波次行（§4.3 格式）。
 
 视图自动刷新：每次写事件后自动重生成 <root>/tasks/{board,gantt,reconcile}.md。计划路径取 --plan，
 缺省读 <root>/tasks/config.json 的 "plan"（仓库相对路径）；都没有则跳过刷新并提示。
@@ -424,6 +428,19 @@ def claim_warnings(args, task: str, states: dict[str, str], holders: dict[str, s
     if plan_path is None or not plan_path.is_file():
         return warnings
     plan = parse_plan(plan_path)
+    lanes_mod = _lanes_module()
+    lanes = lanes_mod.parse_lanes(plan_path)
+    if lanes:
+        lane = lanes_mod.lane_of(lanes).get(task)
+        owner = lanes.get(lane, {}).get("agent") if lane else ""
+        if lane is None:
+            print(f"⚠ {task} 不在任何车道里，先补车道表再派工", file=sys.stderr)
+        elif owner and args.agent != owner and not args.agent.startswith(owner + "/"):
+            warnings.append((owner, f"{task} 属于车道 {lane}（归 {owner}），{args.agent} 认领了它；跨车道接手须先 HANDOFF"))
+        preds = lanes_mod.predecessors(lanes, lanes_mod.parse_sync(plan_path)).get(task, set())
+        pending = sorted(p for p in preds if states.get(p) != "done")
+        if pending:
+            print(f"⚠ {task} 的前置未 done：{', '.join(pending)}（车道顺序/同步点）", file=sys.stderr)
     mine = plan.get(task, {}).get("files") or []
     if not mine:
         return warnings
@@ -435,6 +452,12 @@ def claim_warnings(args, task: str, states: dict[str, str], holders: dict[str, s
         if hits:
             warnings.append((other_agent, f"{task} 与 {other}（{other_agent} 持有）改动文件重叠：{', '.join(hits)}；请串行或归同一 agent"))
     return warnings
+
+
+def _lanes_module():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import lanes
+    return lanes
 
 
 def _ownership_module():
@@ -636,6 +659,7 @@ def cmd_board(args) -> int:
     states, notes, updated = reduce_states(load_events(args.root))
     plan = parse_plan(args.plan)
     ids = sorted(set(plan) | set(states), key=lambda t: (t.split("-")[0], int(t.split("-")[1])))
+    where = _lanes_module().lane_of(_lanes_module().parse_lanes(args.plan))
     batches: dict[str, list[str]] = {}
     for task in ids:
         batches.setdefault(task.split("-")[0], []).append(task)
@@ -654,8 +678,8 @@ def cmd_board(args) -> int:
     for batch in sorted(batches):
         out.append(f"## {batch}")
         out.append("")
-        out.append("| 任务 | 状态 | 备注 | 更新 | 摘要 |")
-        out.append("|---|---|---|---|---|")
+        out.append("| 任务 | 车道 | 状态 | 备注 | 更新 | 摘要 |")
+        out.append("|---|---|---|---|---|---|")
         for task in batches[batch]:
             info = plan.get(task, {})
             state = states.get(task, "pending")
@@ -665,7 +689,7 @@ def cmd_board(args) -> int:
                 title = title[:39] + "…"
             mark = MARKERS.get(state, "?")
             out.append(
-                f"| {task} | {mark} {state} | {note} | {updated.get(task, '—')} | {title} |"
+                f"| {task} | {where.get(task, '—')} | {mark} {state} | {note} | {updated.get(task, '—')} | {title} |"
             )
         out.append("")
     text = "\n".join(out)
@@ -677,8 +701,62 @@ def cmd_board(args) -> int:
     return 0
 
 
+def cmd_gantt_lanes(args, lanes: dict, sync: list) -> int:
+    """gantt（车道版）：车道 × 推导波次；波次 = 车道顺序 + 同步点的最长路径时间槽。"""
+    lanes_mod = _lanes_module()
+    states, _, _ = reduce_states(load_events(args.root))
+    preds = lanes_mod.predecessors(lanes, sync)
+    slot, cyclic = lanes_mod.schedule(preds)
+    if cyclic:
+        print(f"✗ 车道依赖有环：{', '.join(sorted(set(cyclic)))}", file=sys.stderr)
+        return 2
+    width = max(slot.values(), default=0)
+    mark = lambda t: f"{MARKERS.get(states.get(t, 'pending'), '?')}{t}"
+    out: list[str] = []
+    out.append("# 甘特视图（车道 × 推导波次，生成物，勿手改）")
+    out.append("")
+    out.append(f"生成时间：{now_iso()}　计划：{args.plan}")
+    out.append("标记：" + "　".join(f"{MARKERS[s]}={s}" for s in ALL_STATES))
+    out.append("")
+    out.append("波次由工具推导：每个任务记 1 个单位工期，开工槽 = 车道内上一个任务与全部同步点前置之后。"
+               "空格 = 该车道在这一波在等别的车道（看下方同步点）或已做完。")
+    out.append("")
+    header = ["车道", "agent", "进度", *[f"W{i}" for i in range(1, width + 1)]]
+    out.append("| " + " | ".join(header) + " |")
+    out.append("|" + "---|" * len(header))
+    for lane, info in lanes.items():
+        cells = [""] * width
+        for t in info["tasks"]:
+            if t in slot:
+                cells[slot[t] - 1] = mark(t)
+        done = sum(1 for t in info["tasks"] if states.get(t) == "done")
+        out.append(f"| **{lane}** | {info['agent'] or '待定'} | {done}/{len(info['tasks'])} | " + " | ".join(cells) + " |")
+    per_wave = [sum(1 for t in slot.values() if t == i) for i in range(1, width + 1)]
+    out.append("| 并发 | | | " + " | ".join(str(n) for n in per_wave) + " |")
+    out.append("")
+    if sync:
+        out.append("## 同步点（跨车道依赖）")
+        out.append("")
+        out.append("| 后（等待方） | 先（被等任务） | 原因 |")
+        out.append("|---|---|---|")
+        for edge in sync:
+            out.append(f"| {mark(edge['after'])} | {' '.join(mark(b) for b in edge['before'])} | {edge['reason'].replace('|', '/')} |")
+        out.append("")
+    text = "\n".join(out)
+    if args.out:
+        Path(args.out).write_text(text + "\n", encoding="utf-8")
+        print(f"✓ 甘特已写入 {args.out}")
+    else:
+        print(text)
+    return 0
+
+
 def cmd_gantt(args) -> int:
-    """gantt：链 × 波次网格，单元格叠加事件日志里的当前状态。"""
+    """gantt：有车道表 → 车道 × 推导波次；否则回退链 × 手写波次网格。"""
+    lanes_mod = _lanes_module()
+    lanes = lanes_mod.parse_lanes(args.plan)
+    if lanes:
+        return cmd_gantt_lanes(args, lanes, lanes_mod.parse_sync(args.plan))
     waves = parse_waves(args.plan)
     if not waves:
         print("✗ 未能从计划文档解析出波次（§4.3 格式变化？）", file=sys.stderr)
@@ -909,7 +987,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="写入文件；缺省打印到 stdout")
     p.set_defaults(func=cmd_board)
 
-    p = sub.add_parser("gantt", help="生成甘特（链 × 波次，Markdown）")
+    p = sub.add_parser("gantt", help="生成甘特（车道 × 推导波次；无车道表时回退链 × 波次）")
     p.add_argument("--out", help="写入文件；缺省打印到 stdout")
     p.set_defaults(func=cmd_gantt)
 
@@ -932,6 +1010,11 @@ def main(argv: list[str] | None = None) -> int:
     args.repo = Path(args.repo)
     if args.plan is not None:
         args.plan = Path(args.plan)
+    elif args.cmd in VIEW_NAMES:
+        args.plan = resolve_plan(args)
+        if args.plan is None or not args.plan.is_file():
+            print(f"✗ 未找到计划：传 --plan 或在 {args.root / TASKS_DIR / CONFIG_NAME} 配 plan", file=sys.stderr)
+            return 2
     agent = getattr(args, "agent", None)
     if agent is not None:
         error = validate_agent_id(agent)

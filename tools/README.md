@@ -1,6 +1,6 @@
 # tools/ — Agentic Workflow 工具集
 
-把「大而模糊的开发目标」拆成可并行的子任务，用「文件所有权矩阵 + 跨域波次」调度多个不同厂商的
+把「大而模糊的开发目标」拆成可并行的子任务，用「链（自动）→ 车道（派工）→ 推导波次」调度多个不同厂商的
 AI agent（Claude / Codex / GPT 等）协作，并保证**同一文件同一时刻只有一个 agent 在改**。
 
 全部脚本仅依赖 Python 3 标准库（`argparse` / `pathlib` / `json` / `hashlib` / `os` / `fnmatch` /
