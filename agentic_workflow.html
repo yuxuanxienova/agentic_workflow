@@ -98,6 +98,7 @@
     <li><a href="#d">Agent 通讯协议</a></li>
     <li><a href="#e">岗位与能力矩阵</a></li>
     <li><a href="#f">Git 分支/worktree 规范</a></li>
+    <li><a href="#g">任务状态跟踪与验收门</a></li>
     <li><a href="#repo">仓库结构与工具</a></li>
     <li><a href="#start">快速上手</a></li>
     <li><a href="#case">实例：EndlessSpace</a></li>
@@ -594,11 +595,163 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 
 <blockquote class="warn"><strong>教训：规范必须先自洽，再谈执行。</strong>执行中出现 agent 大量私拉分支/worktree、子任务做完不提交——根因不在 agent，而在<b>早期文档自相矛盾</b>：一边说「默认单主干直推、完成即 commit」，一边又鼓励「开 worktree 并行」。两套规则打架，agent 无所适从。<b>规则自相矛盾时，一定要先修规则。</b></blockquote>
 
+<!-- ============ g ============ -->
+<h2 id="g"><span class="k">g</span>任务状态跟踪与验收门 <span class="status bt">battle-tested</span></h2>
+
+<p>任务拆分得再好，只要「谁做完了、做到哪一步、凭什么算完成」靠人肉记在 Markdown 里，几天之内必然漂移。病根是把三种职责塞进同一个文件：<b>计划</b>、<b>状态</b>、<b>视图</b>。g 章把它拆成三层，每层只有一个真源。</p>
+
+<div class="card grid">
+  <div class="box"><h5>PLAN · 计划</h5><p>手写，只描述「要做什么、改哪些文件、验收等级」；<b>禁止写任何状态标记</b>（不打勾）。plan 退化为纯计划。</p></div>
+  <div class="box"><h5>STATE · 状态</h5><p><code>.agentic/tasks/events.jsonl</code>，append-only 事件日志，<b>入库 git</b>，是唯一状态真源。状态只能靠追加事件改变。</p></div>
+  <div class="box"><h5>VIEWS · 视图</h5><p>看板 / 甘特 / 对账报告，全部由 <code>task_state.py</code> <b>生成</b>，视为只读产物，<b>禁止手改</b>。</p></div>
+  <div class="box"><h5>为什么不漂移</h5><p>状态只有一条写入路径（追加事件），视图重算即自洽；计划不再承载状态，也就不会出现「勾了没做 / 做了忘勾」。</p></div>
+</div>
+
+<h3>g.1 状态机</h3>
+
+<p>五个正状态线性推进，两个旁支状态可作缓冲或终态。非法转移一律拒绝（退出码 2）；状态<b>不允许回退</b>，<code>done</code> 不可撤销。</p>
+
+<figure class="fig">
+<svg viewBox="0 0 900 205" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="任务状态机">
+  <defs>
+    <marker id="stgd" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#4d6b8a"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace,Menlo,monospace" font-size="12">
+    <!-- 主链 -->
+    <rect x="40" y="36" width="130" height="46" rx="10" fill="#16233a" stroke="#6bccff"/>
+    <text x="105" y="57" fill="#dbe7f5" text-anchor="middle" font-size="12">pending</text>
+    <text x="105" y="72" fill="#8fa6c0" text-anchor="middle" font-size="10">待办·零事件</text>
+
+    <rect x="205" y="36" width="130" height="46" rx="10" fill="#16233a" stroke="#6bccff"/>
+    <text x="270" y="57" fill="#dbe7f5" text-anchor="middle" font-size="12">claimed</text>
+    <text x="270" y="72" fill="#8fa6c0" text-anchor="middle" font-size="10">已认领</text>
+
+    <rect x="370" y="36" width="130" height="46" rx="10" fill="#16233a" stroke="#6bccff"/>
+    <text x="435" y="57" fill="#dbe7f5" text-anchor="middle" font-size="12">active</text>
+    <text x="435" y="72" fill="#8fa6c0" text-anchor="middle" font-size="10">进行中</text>
+
+    <rect x="535" y="36" width="130" height="46" rx="10" fill="#16233a" stroke="#6bccff"/>
+    <text x="600" y="57" fill="#dbe7f5" text-anchor="middle" font-size="12">verify</text>
+    <text x="600" y="72" fill="#8fa6c0" text-anchor="middle" font-size="10">待验收门</text>
+
+    <rect x="700" y="36" width="130" height="46" rx="10" fill="#123224" stroke="#6bffb8"/>
+    <text x="765" y="57" fill="#6bffb8" text-anchor="middle" font-size="12">done</text>
+    <text x="765" y="72" fill="#8fa6c0" text-anchor="middle" font-size="10">完成·终态</text>
+
+    <!-- 主链转移 -->
+    <line x1="170" y1="59" x2="201" y2="59" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#stgd)"/>
+    <text x="187" y="30" fill="#6bccff" text-anchor="middle" font-size="10.5">claim</text>
+    <line x1="335" y1="59" x2="366" y2="59" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#stgd)"/>
+    <text x="352" y="30" fill="#6bccff" text-anchor="middle" font-size="10.5">start</text>
+    <line x1="500" y1="59" x2="531" y2="59" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#stgd)"/>
+    <text x="517" y="30" fill="#6bccff" text-anchor="middle" font-size="10.5">submit</text>
+    <line x1="665" y1="59" x2="696" y2="59" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#stgd)"/>
+    <text x="682" y="30" fill="#6bccff" text-anchor="middle" font-size="10.5">done</text>
+
+    <!-- 旁支 -->
+    <rect x="370" y="150" width="130" height="46" rx="10" fill="#16233a" stroke="#ffb86b"/>
+    <text x="435" y="171" fill="#ffb86b" text-anchor="middle" font-size="12">blocked</text>
+    <text x="435" y="186" fill="#8fa6c0" text-anchor="middle" font-size="10">挂起·可解除</text>
+
+    <rect x="535" y="150" width="130" height="46" rx="10" fill="#1f1416" stroke="#ff7a85"/>
+    <text x="600" y="171" fill="#ff7a85" text-anchor="middle" font-size="12">failed</text>
+    <text x="600" y="186" fill="#8fa6c0" text-anchor="middle" font-size="10">失败·终态</text>
+
+    <line x1="455" y1="82" x2="455" y2="146" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#stgd)"/>
+    <text x="462" y="118" fill="#ffb86b" font-size="10.5">block</text>
+    <line x1="415" y1="150" x2="415" y2="86" stroke="#4d6b8a" stroke-width="1.4" marker-end="url(#stgd)"/>
+    <text x="406" y="120" fill="#8fa6c0" text-anchor="end" font-size="10.5">unblock</text>
+    <line x1="600" y1="82" x2="600" y2="146" stroke="#ff7a85" stroke-width="1.4" marker-end="url(#stgd)"/>
+    <text x="607" y="118" fill="#ff7a85" font-size="10.5">fail</text>
+    <line x1="500" y1="173" x2="531" y2="173" stroke="#ff7a85" stroke-width="1.4" marker-end="url(#stgd)"/>
+  </g>
+</svg>
+<figcaption>图 7 · 任务状态机：pending → claimed → active → verify → done，旁支 blocked / failed（任意非终态可 fail）</figcaption>
+</figure>
+
+<table>
+  <thead><tr><th>命令</th><th>转移</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td><code>claim</code></td><td>pending → claimed</td><td>认领任务，声明由谁做</td></tr>
+    <tr><td><code>start</code></td><td>claimed → active</td><td>开工</td></tr>
+    <tr><td><code>submit</code></td><td>active → verify</td><td>提交验收，附证据</td></tr>
+    <tr><td><code>done</code></td><td>verify → done</td><td>通过验收门，落终态</td></tr>
+    <tr><td><code>block</code> / <code>unblock</code></td><td>↔ blocked</td><td>遇阻挂起 / 解除</td></tr>
+    <tr><td><code>fail</code></td><td>→ failed</td><td>判定失败（终态）</td></tr>
+  </tbody>
+</table>
+
+<h3>g.2 验收门：done 必须挂证据</h3>
+
+<p><code>done</code> 不是「我觉得做完了」，而是一道<b>门</b>：必须挂证据，且证据等级 ≥ 计划里该任务「验收」列声明的等级。</p>
+
+<pre><code># 证据格式：LEVEL:PATH（LEVEL ∈ L0/L1/L2）
+python3 agentic_workflow/tools/task_state.py --root .agentic done P1-3 \
+    --agent a1 --evidence L2:Doc/godot/parity/p1-3/review.json</code></pre>
+
+<table>
+  <thead><tr><th>等级</th><th>含义</th><th>证据形态</th></tr></thead>
+  <tbody>
+    <tr><td><code>L0</code></td><td>自动测试全绿</td><td><code>verify.sh</code> 退出 0 的日志</td></tr>
+    <tr><td><code>L1</code></td><td>真实渲染 + 可重复动作脚本 + 状态断言</td><td>连跑 3 次的截图序列 + 状态断言</td></tr>
+    <tr><td><code>L2</code></td><td>双端并排人工对照</td><td>并排截图 + <code>review.json</code></td></tr>
+  </tbody>
+</table>
+
+<blockquote class="warn"><strong>门的三条硬约束：</strong>① 等级不够 → 拒绝（如用 L1 证据过 L2 门）；② 证据路径实体不存在 → 拒绝；③ 计划声明等级从「验收」列的<b>列首</b>解析，避免正文里顺带提到 L2 被误判（实战踩过的坑）。</blockquote>
+
+<h3>g.3 三路对账 reconcile</h3>
+
+<p>工具同时读三方——<b>计划的打勾</b>（过渡期还残留时）、<b>事件日志</b>、<b>git 工作树改动</b>，把不一致显式列成五类差异；退出码 1 表示存在待处理差异，可直接挂 CI。</p>
+
+<pre><code>python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md \
+    reconcile --out .agentic/tasks/reconcile.md</code></pre>
+
+<table>
+  <thead><tr><th>差异类</th><th>含义</th><th>怎么处理</th></tr></thead>
+  <tbody>
+    <tr><td>计划打勾但非 done</td><td>勾了却没事件（做了忘勾 / 勾了没做）</td><td>补事件或重新审计</td></tr>
+    <tr><td>有事件但未打勾</td><td>过渡期才有意义</td><td>删掉手写勾即可</td></tr>
+    <tr><td>done 但证据不合规</td><td>缺证据 / 等级不足 / 路径不存在</td><td>补证据或打回 verify</td></tr>
+    <tr><td>未登记却已改动其文件</td><td>任务还没 claim，文件已被改</td><td>该 agent 必须补 claim</td></tr>
+    <tr><td>工作树改动无归属</td><td>改了文件但不对应任何任务</td><td>补任务或确认是收尾改动</td></tr>
+  </tbody>
+</table>
+
+<h3>g.4 审计收口：一次把历史灌平</h3>
+
+<p>框架接入一个「已经跑乱」的项目时，不要重放全部历史。做法是<b>审计跑批 + 一次性基线</b>，此后只向前记录：</p>
+
+<ol>
+  <li>用 git 历史、HANDOFF、截图、<code>review.json</code> 反推每个任务的真实状态，产出差异表；</li>
+  <li>用户逐条确认 → 写成基线 JSON（含 <code>reason</code> / <code>source_plan</code> / <code>audited_at</code>）；</li>
+  <li><code>seed</code> 灌进 <code>events.jsonl</code> 作为起点；</li>
+  <li>从计划文档删掉<b>所有</b>手写勾选，plan 退化为纯计划。</li>
+</ol>
+
+<blockquote><strong>关键判据：</strong>「打了勾的是否真做完了」由<b>证据</b>决定，而不是信任勾本身。EndlessSpace 本次审计发现 10 个勾全部为真，但另有 <b>6 个做完却忘勾</b>——漂移的方向恰好是「漏记」而不是「虚报」。</blockquote>
+
+<h3>g.5 实例：EndlessSpace 基线重建</h3>
+
+<div class="kpi">
+  <div><b>71</b><span>计划任务总数</span></div>
+  <div><b>25</b><span>seed 基线事件</span></div>
+  <div><b>12/12</b><span>P0 全部完成</span></div>
+  <div><b>6</b><span>做完却忘勾</span></div>
+  <div><b>11</b><span>未登记却已改文件</span></div>
+</div>
+
+<p>审计把「P0 有的完成、有的没完成」这一团浆糊拆清楚了：P0 共 12 个任务<b>全部真实完成</b>，其中 6 个从未打勾；漂移全部来自「漏记」。基线灌入后，<code>reconcile</code> 前三类差异归零，只剩 Codex 未登记的 P1/P2 工作与未归属的工作树改动——这些正是接下来要补 claim 的部分。</p>
+
+<blockquote class="warn"><strong>工具只解决一半。</strong>三层真源能消除「记录漂移」，但「未登记就先改文件」是<b>流程违规</b>——必须让 agent 开工前 <code>claim</code>，否则对账会持续报「未登记却已改动其文件」。</blockquote>
+
 <!-- ============ repo ============ -->
 <h2 id="repo"><span class="k">9</span>仓库结构与工具</h2>
 
 <pre><code>agentic_workflow/
-├── agentic_workflow.html      # 本文档：六章标准正文
+├── agentic_workflow.html      # 本文档：a–g 标准正文
 ├── README.md
 ├── templates/
 │   ├── domain-tree.schema.json    domain-tree.example.json
@@ -610,7 +763,8 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 │   ├── agent_registry.py          # 注册表：register/heartbeat/who-owns/stale
 │   ├── file_lock.py               # CAS 文件锁：acquire/release/status/sweep
 │   ├── bus.py                     # 消息总线：send/read/tail（11 种消息类型）
-│   └── validate_domains.py        # 域树校验：≤4 级 + 叶子停止规则
+│   ├── validate_domains.py        # 域树校验：≤4 级 + 叶子停止规则
+│   └── task_state.py              # 任务状态：事件日志 + 状态机 + 验收门 + 看板/甘特/对账
 └── examples/endlessspace-device-parity/
     ├── domains.json               # 16 个一级域、54 个叶子
     ├── tasks.md                   # P1–P4 六列表（改动文件逐字一致）
@@ -626,6 +780,7 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
     <tr><td><code>file_lock.py</code></td><td>文件级 CAS 锁，防两人同改一文件</td><td><code>acquire path --agent a1 --task P1-1</code></td></tr>
     <tr><td><code>bus.py</code></td><td>agent 间消息（冲突/请求/交接/中断）</td><td><code>send --from a2 --to a1 --type CONFLICT</code></td></tr>
     <tr><td><code>validate_domains.py</code></td><td>域树层级 ≤4、叶子停止规则</td><td><code>domains.json</code></td></tr>
+    <tr><td><code>task_state.py</code></td><td>任务状态真源 + 验收门 + 三路对账</td><td><code>done P1-3 --evidence L2:review.json</code> · <code>board</code>/<code>gantt</code>/<code>reconcile</code></td></tr>
   </tbody>
 </table>
 
@@ -649,7 +804,13 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 
 # 6. 开工前加锁 + 登记；收工释放 + 交接
 python3 agentic_workflow/tools/file_lock.py --root .agentic acquire &lt;file&gt; --agent a1 --task P1-1
-python3 agentic_workflow/tools/bus.py      --root .agentic send --from a1 --to a2 --type CONFLICT --body "&lt;file&gt; 我锁了"</code></pre>
+python3 agentic_workflow/tools/bus.py      --root .agentic send --from a1 --to a2 --type CONFLICT --body "&lt;file&gt; 我锁了"
+
+# 7. 状态：认领 → 开工 → 提交 → 过验收门（done 必须挂证据）
+python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md claim P1-1 --agent a1
+python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md done  P1-1 --evidence L1:out/p1-1/shots
+#    看板 / 甘特 / 对账（生成物，勿手改）
+python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md board --out .agentic/tasks/board.md</code></pre>
 
 <!-- ============ case ============ -->
 <h2 id="case"><span class="k">11</span>实例：EndlessSpace 真机四域修复</h2>
@@ -693,12 +854,13 @@ python3 agentic_workflow/tools/bus.py      --root .agentic send --from a1 --to a
     <tr><td>文件锁 / 注册表 / 消息总线（d）</td><td><span class="status th">部分验证</span></td><td>CLI 已自测闭环；<b>多 agent 真实并发</b>尚未在跨厂商场景验证</td></tr>
     <tr><td>协作式中断 / 强抢占（d）</td><td><span class="status th">理论</span></td><td>跨厂商无内核级抢占，依赖 agent 服从规范</td></tr>
     <tr><td>Reviewer / Integrator 岗位（e）</td><td><span class="status th">设计</span></td><td>已定岗与甘特节点，尚未启用</td></tr>
+    <tr><td>任务状态跟踪 / 验收门 / 对账（g）</td><td><span class="status bt">battle-tested</span></td><td>在 EndlessSpace 71 任务计划上跑通审计收口与基线重建，工具自测闭环</td></tr>
   </tbody>
 </table>
 
 <blockquote class="warn">避免过度抽象：单一项目的经验容易被过度泛化。跨项目使用后，应把本表的状态逐条升级或降级，而不是假设一切已就绪。</blockquote>
 
-<p class="foot">Agentic Workflow 标准 v0.1 · 六章正文 + 模板 + 工具 + EndlessSpace 实例<br>本文件由 <code>agentic_workflow</code> 仓库维护，随实践迭代</p>
+<p class="foot">Agentic Workflow 标准 v0.1 · a–g 七章正文 + 模板 + 工具 + EndlessSpace 实例<br>本文件由 <code>agentic_workflow</code> 仓库维护，随实践迭代</p>
 
 </main>
 </div>
