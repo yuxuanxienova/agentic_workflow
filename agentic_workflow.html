@@ -441,12 +441,14 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 <pre><code>.agentic/
 ├── registry.json          # 谁在干什么：agent_id/model/role/task/files/status/heartbeat
 ├── locks/&lt;sha1(path)&gt;.json # 每个文件的 CAS 锁：{path, owner, task_id, acquired_ts, ttl, seq}
-├── inbox/&lt;agent_id&gt;.jsonl  # 定向收件箱（追加式）
-└── events.jsonl           # 全局权威事件流（append-only）</code></pre>
+├── bus/log.jsonl          # 全局权威消息流（append-only，全局一份）
+├── bus/inbox/&lt;agent_id&gt;.jsonl  # 定向收件箱（追加式）
+├── plans/&lt;name&gt;/         # 每个计划一个文件夹：plan.json + plan.md（源文件副本）+ events.jsonl + 视图
+└── index.md               # 所有计划汇总（生成物）</code></pre>
 
 <h3>消息类型（11 种）</h3>
 <p><span class="tag">CLAIM</span> <span class="tag">RELEASE</span> <span class="tag">CONFLICT</span> <span class="tag">PROPOSE</span> <span class="tag">ACCEPT</span> <span class="tag">REJECT</span> <span class="tag">REQUEST_HELP</span> <span class="tag">INTERRUPT</span> <span class="tag">HANDOFF</span> <span class="tag">BLOCKED</span> <span class="tag">DONE</span></p>
-<p>消息体：<code>{"seq","ts","from","to","type","task_id","body","refs"}</code>。<code>to = "*"</code> 表示广播（只写 <code>events.jsonl</code>）。</p>
+<p>消息体：<code>{"seq","ts","from","to","type","task_id","body","refs"}</code>。<code>to = "*"</code> 表示广播（只写 <code>bus/log.jsonl</code>，收件人 read 时一并读到）。</p>
 
 <h3>协作时序</h3>
 <figure class="fig">
@@ -624,7 +626,7 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
 
 <div class="card grid">
   <div class="box"><h5>PLAN · 计划</h5><p>手写，只描述「要做什么、改哪些文件」；<b>禁止写任何状态标记</b>（不打勾）。plan 退化为纯计划。</p></div>
-  <div class="box"><h5>STATE · 状态</h5><p><code>.agentic/tasks/events.jsonl</code>，append-only 事件日志，<b>入库 git</b>，是唯一状态真源。状态只能靠追加事件改变。</p></div>
+  <div class="box"><h5>STATE · 状态</h5><p><code>.agentic/plans/&lt;name&gt;/events.jsonl</code>，append-only 事件日志，<b>入库 git</b>，是唯一状态真源。状态只能靠追加事件改变。</p></div>
   <div class="box"><h5>VIEWS · 视图</h5><p>看板 / 甘特 / 对账报告，全部由 <code>task_state.py</code> <b>生成</b>，视为只读产物，<b>禁止手改</b>。</p></div>
   <div class="box"><h5>为什么不漂移</h5><p>状态只有一条写入路径（追加事件），视图重算即自洽；计划不再承载状态，也就不会出现「勾了没做 / 做了忘勾」。</p></div>
 </div>
@@ -731,8 +733,7 @@ python3 agentic_workflow/tools/task_state.py --root .agentic revoke P1-3 \
 
 <p>工具同时读三方——<b>计划的打勾</b>（过渡期还残留时）、<b>事件日志</b>、<b>git 工作树改动</b>，把不一致列成四类差异。<b>这是体检报告，不是闸门</b>：它暴露漂移供你重新规划，落后再改都行。</p>
 
-<pre><code>python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md \
-    reconcile --out .agentic/tasks/reconcile.md</code></pre>
+<pre><code>python3 agentic_workflow/tools/task_state.py --plan &lt;name&gt; reconcile</code></pre>
 
 <table>
   <thead><tr><th>差异类</th><th>含义</th><th>怎么处理</th></tr></thead>
@@ -870,7 +871,7 @@ alwaysApply: true
 
 <pre><code>## 任务与状态入口（开工前必做）
 - 任务定义 / 要改的文件        → Doc/&lt;批次&gt;计划文档.md
-- 任务真实状态（唯一真源）    → .agentic/tasks/events.jsonl
+- 任务真实状态（唯一真源）    → .agentic/plans/&lt;name&gt;/events.jsonl
 - 查状态：python3 agentic_workflow/tools/task_state.py --root .agentic status P1-3
 - 状态机 pending→claimed→active→verify→done（允许前跳）；done 无前置，留痕写可选 --note</code></pre>
 
@@ -907,7 +908,7 @@ alwaysApply: true
     <rect x="246" y="236" width="240" height="26" rx="6" fill="#16233a" stroke="#24354f"/>
     <text x="366" y="253" fill="#dbe7f5" text-anchor="middle" font-size="11">Doc/godot/plans/*.md</text>
     <rect x="502" y="236" width="300" height="26" rx="6" fill="#16233a" stroke="#24354f"/>
-    <text x="652" y="253" fill="#dbe7f5" text-anchor="middle" font-size="11">.agentic/tasks/events.jsonl</text>
+    <text x="652" y="253" fill="#dbe7f5" text-anchor="middle" font-size="11">.agentic/plans/&lt;name&gt;/events.jsonl</text>
   </g>
 </svg>
 <figcaption>图 9 · 入口层只放「稳定原则 + 指针」（A 类，每次必读）；细节放 C 类文档，由入口的指针带出。</figcaption>
@@ -1008,10 +1009,10 @@ python3 agentic_workflow/tools/file_lock.py --root .agentic acquire &lt;file&gt;
 python3 agentic_workflow/tools/bus.py      --root .agentic send --from a1 --to a2 --type CONFLICT --body "&lt;file&gt; 我锁了"
 
 # 7. 状态：认领 → 开工 → 提交 → 完成（done 无前置，留痕写可选 --note）
-python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md claim P1-1 --agent a1
-python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md done  P1-1 --agent a1 --note "截图 out/p1-1/shots"
+python3 agentic_workflow/tools/task_state.py --plan &lt;name&gt; claim P1-1 --agent a1
+python3 agentic_workflow/tools/task_state.py --plan &lt;name&gt; done  P1-1 --agent a1 --note "截图 out/p1-1/shots"
 #    看板 / 甘特 / 对账（生成物，勿手改）
-python3 agentic_workflow/tools/task_state.py --root .agentic --repo . --plan PLAN.md board --out .agentic/tasks/board.md</code></pre>
+python3 agentic_workflow/tools/task_state.py --plan &lt;name&gt; board   # 写事件后也会自动写进 plans/&lt;name&gt;/board.md</code></pre>
 
 <!-- ============ case ============ -->
 <h2 id="case"><span class="k">11</span>实例：EndlessSpace 真机四域修复</h2>

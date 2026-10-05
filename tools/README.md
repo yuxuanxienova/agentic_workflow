@@ -15,8 +15,14 @@ AI agent（Claude / Codex / GPT 等）协作，并保证**同一文件同一时�
 <root>/
   registry.json        # agent 注册表（agent_registry.py）
   locks/<sha1>.json    # 文件锁（file_lock.py）
-  events.jsonl         # 全局权威事件流（bus.py）
-  inbox/<agent_id>.jsonl  # 定向收件箱（bus.py）
+  bus/log.jsonl        # 全局权威消息流（bus.py；全局一份，不分计划）
+  bus/inbox/<agent_id>.jsonl  # 定向收件箱（bus.py）
+  plans/<name>/        # 每个计划一个文件夹（task_state.py），多个计划可同时 active、互不混写
+    plan.json          #   {"name","source","status":"active"|"closed","opened","closed"}
+    plan.md            #   计划源文件的副本——工具只解析这份；active 时写事件自动与 source 同步，closed 后冻结
+    events.jsonl       #   本计划状态事件（唯一状态真源）
+    board.md gantt.md reconcile.md   # 生成物
+  index.md             # 所有计划一行汇总（生成物）
 ```
 
 约定：所有 `--root`、`--plan`、文件路径都以**仓库相对路径**表示，避免把本机绝对路径写死。
@@ -24,7 +30,7 @@ AI agent（Claude / Codex / GPT 等）协作，并保证**同一文件同一时�
 **agent ID**（task_state / bus 强制校验）：`<厂商>-<会话/实例>[/<子agent>]`，如 `claude-endlessspace-d5`、
 `codex-1`、`claude-endlessspace-d5/e2`。裸厂商名（`claude`）拒绝——日志里分不清是谁，就无法定向协调。
 
-**并发**：task_state 与 bus 的「取 seq + 追加」都在 `flock` 排他锁内完成（`tasks/.events.lock`、`.bus.lock`），
+**并发**：task_state 与 bus 的「取 seq + 追加」都在 `flock` 排他锁内完成（`plans/<name>/.events.lock`、`bus/.bus.lock`），
 多会话同时写不会撞号。
 
 ## 脚本
@@ -117,7 +123,7 @@ python3 tools/validate_domains.py domains.json --json
 解决「一份手改 Markdown 同时当计划+状态+视图」导致的漂移。三层职责分离：
 
 - **PLAN**：计划文档里的任务表——只写计划（任务/改动文件/可选备注），**不写状态**。
-- **STATE**：`<root>/tasks/events.jsonl`——append-only，每行=一次状态转移，**唯一状态真源**。
+- **STATE**：`<root>/plans/<name>/events.jsonl`——append-only，每行=一次状态转移，**唯一状态真源**。
 - **VIEWS**：`board` / `gantt` / `reconcile`——全部由本工具生成，**禁止手改**。
 
 状态机：`pending → claimed → active → verify → done`，**允许前跳**（`pending` 直接记 `done` 也行，
@@ -127,34 +133,33 @@ python3 tools/validate_domains.py domains.json --json
 > **验收是「灯」，不是「门」。** 想留痕就写 `--note`（自由文本），不写也照样能 done；漏了由 `reconcile` 软报告暴露后重新规划。快速迭代 > 精准验收。
 
 ```bash
-PLAN=Doc/godot/plans/PLAN.md
-# 写事件（append-only）
-python3 tools/task_state.py --plan $PLAN claim  P1-1 --agent codex-1
-python3 tools/task_state.py --plan $PLAN start  P1-1 --agent codex-1
-python3 tools/task_state.py --plan $PLAN submit P1-1 --agent codex-1
-python3 tools/task_state.py --plan $PLAN done   P1-1 --agent codex-1 --note "截图 out/...；verify.sh 退 0"
-python3 tools/task_state.py --plan $PLAN block  P4-5 --agent codex-1 --reason "等 P0-12 取证"
-python3 tools/task_state.py --plan $PLAN revoke P1-1 --agent codex-1 --reason "当时判断有误，重开"
-# 视图
-python3 tools/task_state.py --plan $PLAN list --batch P1
-python3 tools/task_state.py --plan $PLAN board --out .agentic/tasks/board.md
-python3 tools/task_state.py --plan $PLAN gantt --out .agentic/tasks/gantt.md
-python3 tools/task_state.py --plan $PLAN reconcile        # plan 打勾 × 事件日志 × git 工作树 三路对账
-python3 tools/task_state.py --plan $PLAN seed baseline.json   # 审计收口：一次性灌基线
+# 计划生命周期：一个计划一个文件夹
+python3 tools/task_state.py plan open plan3 --source Doc/godot/plans/PLAN3.md   # 建 plans/plan3/ 并复制源文件
+python3 tools/task_state.py plan sync plan3      # 立即把源文件同步到副本（写事件时也会自动同步）
+python3 tools/task_state.py plan list
+python3 tools/task_state.py plan close plan2     # 冻结副本与视图，列出未终结任务
+python3 tools/task_state.py --plan plan2 migrate P13-2 --to plan3 --agent codex-1   # 旧计划记 migrated，新计划续记
+# 写事件（append-only）；--plan 缺省 → $AGENTIC_PLAN → 按任务 ID 在 active 计划里唯一匹配 → 唯一 active 计划
+python3 tools/task_state.py claim  P1-1 --agent codex-1
+python3 tools/task_state.py start  P1-1 --agent codex-1
+python3 tools/task_state.py submit P1-1 --agent codex-1
+python3 tools/task_state.py done   P1-1 --agent codex-1 --note "截图 out/...；verify.sh 退 0"
+python3 tools/task_state.py block  P4-5 --agent codex-1 --reason "等 P0-12 取证"
+python3 tools/task_state.py --plan plan3 revoke P1-1 --agent codex-1 --reason "当时判断有误，重开"
+# 视图（缺省 --out 打印到 stdout；写事件后自动写进 plans/<name>/）
+python3 tools/task_state.py --plan plan3 list --batch P1
+python3 tools/task_state.py --plan plan3 reconcile        # plan 打勾 × 事件日志 × git 工作树 三路对账
+python3 tools/task_state.py --plan plan3 seed baseline.json   # 审计收口：一次性灌基线
 ```
 
 `--note` 是自由文本；兼容旧写法 `--evidence LEVEL:PATH`（折叠成路径串并入备注显示，**不校验**）。
 
 **认领软提示**（灯不是门）：`claim`/`start` 照常成功；若该任务已被别的 agent 持有，或按计划「改动文件」列
-与别的 agent 持有中的任务重叠，则打印 `⚠` 并经 `bus.py` 给对方发 `CONFLICT`。持有者 = 最近一次 claim/start
+与别的 agent 持有中的任务重叠（**含其它 active 计划里的任务**），则打印 `⚠` 并经 `bus.py` 给对方发 `CONFLICT`。持有者 = 最近一次 claim/start
 的 agent，done/failed 后清空。对方 ID 不合法（旧日志里的裸 `claude`）时只打印，需人工联系。
 
-**视图自动刷新**：每次写事件（claim/start/submit/done/block/fail/unblock/revoke/seed）成功后自动重生成
-`<root>/tasks/{board,gantt,reconcile}.md`。计划路径取 `--plan`，缺省读 `<root>/tasks/config.json`：
-
-```json
-{"plan": "Doc/godot/plans/PLAN.md"}
-```
+**视图自动刷新**：每次写事件成功后，先把 active 计划的源文件同步到 `plans/<name>/plan.md`，再重生成
+`plans/<name>/{board,gantt,reconcile}.md` 与 `<root>/index.md`。closed 计划拒绝写事件。
 
 `reconcile` 输出四类差异：计划打勾但非 done / 有事件但未打勾 /
 未登记却已改动其文件 / 工作树改动未归属任何任务。**这是体检报告，不是闸门**。

@@ -3,12 +3,12 @@
 
 真源纪律（三层，缺一即乱）：
   PLAN   计划文档里的任务表——只写「计划」（任务/改动文件），**不写状态**。
-  STATE  <root>/tasks/events.jsonl——append-only，每行=一次状态转移，**唯一状态真源**。
+  STATE  <root>/plans/<name>/events.jsonl——append-only，每行=一次状态转移，**唯一状态真源**。
   VIEWS  board / gantt / reconcile——全部由本工具生成，**禁止手改**。
 
 状态机（允许前跳以降低摩擦；终态只能靠 revoke 反悔）：
   pending → claimed → active → verify → done   （可跳级：pending 直接记 done 也允许）
-  旁支：非终态 → blocked → active（unblock）；任意非终态 → failed
+  旁支：非终态 → blocked → active（unblock）；任意非终态 → failed；migrate → migrated（终态）
   done / failed 是终态；发现判断有误用 `revoke` 追加补偿事件回到 active（历史不删）。
 
 验收是「灯」不是「门」（灰度、快迭代优先）：
@@ -33,8 +33,11 @@
 链 / 车道 / 波次（见 lanes.py）：链是工具算的约束，车道是唯一派工单位，波次由车道顺序 + 同步点推导。
 计划有车道表时 gantt 输出「车道 × 推导波次」；没有时回退旧的手写波次行（§4.3 格式）。
 
-视图自动刷新：每次写事件后自动重生成 <root>/tasks/{board,gantt,reconcile}.md。计划路径取 --plan，
-缺省读 <root>/tasks/config.json 的 "plan"（仓库相对路径）；都没有则跳过刷新并提示。
+多计划：每个计划一个文件夹 <root>/plans/<name>/（见 plans.py），plan open/close/sync/list 管理，
+migrate 把任务转到另一个计划。--plan <name> > $AGENTIC_PLAN > 按任务 ID 在 active 计划里唯一匹配。
+跨计划：claim/start 的文件重叠检查覆盖所有 active 计划。
+
+视图自动刷新：每次写事件后同步计划副本，并重生成 plans/<name>/{board,gantt,reconcile}.md 与 <root>/index.md。
 
 默认 <root> = <git 仓库根>/.agentic。
 
@@ -55,9 +58,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-TASKS_DIR = "tasks"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import plans as plans_mod  # noqa: E402
+
 EVENTS_NAME = "events.jsonl"
-CONFIG_NAME = "config.json"
+INDEX_NAME = "index.md"
 LOCK_NAME = ".events.lock"
 VIEW_NAMES = {"board": "board.md", "gantt": "gantt.md", "reconcile": "reconcile.md"}
 
@@ -66,7 +71,7 @@ AGENT_ID_RE = re.compile(r"^[a-z]+-[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-
 DEFAULT_ROOT = ".agentic"
 
 STATE_ORDER = ("pending", "claimed", "active", "verify", "done")
-BRANCH_STATES = ("blocked", "failed")
+BRANCH_STATES = ("blocked", "failed", "migrated")
 ALL_STATES = STATE_ORDER + BRANCH_STATES
 
 # 线性命令 → 目标状态。允许「前跳」：只要目标在状态序上不倒退即可（pending 直接 done 也行）。
@@ -78,7 +83,7 @@ LINEAR_TARGETS = {
     "unblock": "active",
 }
 RANK = {state: i for i, state in enumerate(STATE_ORDER)}   # pending=0 … done=4
-TERMINAL = {"done", "failed"}
+TERMINAL = {"done", "failed", "migrated"}  # migrated：已并入别的计划，由那边接着记
 BLOCKABLE = {"pending", "claimed", "active", "verify", "blocked"}
 FAILABLE = {"pending", "claimed", "active", "verify", "blocked"}
 
@@ -93,6 +98,7 @@ MARKERS = {
     "done": "✓",
     "blocked": "✖",
     "failed": "✗",
+    "migrated": "→",
 }
 
 WAVE_LINE_RE = re.compile(r"^\s*-\s*\*\*W(\d)")
@@ -154,8 +160,9 @@ def append_jsonl(path: Path, payload: dict) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def events_path(root: Path) -> Path:
-    return root / TASKS_DIR / EVENTS_NAME
+def events_path(pdir: Path) -> Path:
+    """pdir = <root>/plans/<name>：每个计划独立一份事件日志。"""
+    return pdir / EVENTS_NAME
 
 
 def load_events(root: Path) -> list[dict]:
@@ -311,7 +318,7 @@ def reduce_states(events: list[dict]) -> tuple[dict[str, str], dict[str, list[st
 @contextlib.contextmanager
 def events_lock(root: Path):
     """多会话并发写：取 seq 与追加必须在同一把排他锁内，否则会撞号。"""
-    lock_path = root / TASKS_DIR / LOCK_NAME
+    lock_path = root / LOCK_NAME
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
@@ -349,37 +356,58 @@ def validate_agent_id(agent: str) -> str | None:
     )
 
 
+def plan_task_ids(pdir: Path) -> set[str]:
+    doc = pdir / plans_mod.DOC_NAME
+    return set(parse_plan(doc)) if doc.is_file() else set()
+
+
 def resolve_plan(args) -> Path | None:
-    """--plan 优先；否则读 <root>/tasks/config.json 的 plan（相对仓库根）。"""
-    if args.plan is not None:
-        return args.plan
-    config = args.root / TASKS_DIR / CONFIG_NAME
-    if not config.is_file():
-        return None
-    try:
-        plan = json.loads(config.read_text(encoding="utf-8")).get("plan")
-    except json.JSONDecodeError:
-        return None
-    return (args.repo / plan) if plan else None
+    """当前计划的 plan.md 副本路径（main 已解析出 args.pdir）。"""
+    pdir = getattr(args, "pdir", None)
+    return pdir / plans_mod.DOC_NAME if pdir else None
 
 
 def refresh_views(args) -> None:
-    """写事件后重生成 board/gantt/reconcile，视图永不过期。失败只提示，不影响写入结果。"""
+    """写事件后：同步计划副本 → 重生成本计划 board/gantt/reconcile → 重生成 <root>/index.md。失败只提示。"""
+    note = plans_mod.sync_copy(args.repo, args.pdir)
+    if note:
+        print(f"ℹ {note}", file=sys.stderr)
     plan = resolve_plan(args)
-    if plan is None or not plan.is_file():
-        print(f"ℹ 未找到计划（--plan 或 {args.root / TASKS_DIR / CONFIG_NAME}），跳过视图刷新", file=sys.stderr)
-        return
-    view_args = argparse.Namespace(**vars(args))
-    view_args.plan = plan
-    view_args.no_git = False
-    renderers = {"board": cmd_board, "gantt": cmd_gantt, "reconcile": cmd_reconcile}
-    for name, render in renderers.items():
-        view_args.out = str(args.root / TASKS_DIR / VIEW_NAMES[name])
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                render(view_args)
-        except Exception as error:  # 视图是派生物，坏了不该连累真源写入
-            print(f"ℹ 视图 {name} 刷新失败：{error}", file=sys.stderr)
+    if plan is not None and plan.is_file():
+        view_args = argparse.Namespace(**vars(args))
+        view_args.plan = plan
+        view_args.no_git = False
+        renderers = {"board": cmd_board, "gantt": cmd_gantt, "reconcile": cmd_reconcile}
+        for name, render in renderers.items():
+            view_args.out = str(args.pdir / VIEW_NAMES[name])
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    render(view_args)
+            except Exception as error:  # 视图是派生物，坏了不该连累真源写入
+                print(f"ℹ 视图 {name} 刷新失败：{error}", file=sys.stderr)
+    else:
+        print(f"ℹ 计划副本缺失（{plan}），跳过视图刷新", file=sys.stderr)
+    write_index(args.root)
+
+
+def write_index(root: Path) -> None:
+    """<root>/index.md：所有计划一行汇总（生成物）。"""
+    out = ["# 计划索引（生成物，勿手改 — 由 tools/task_state.py 生成）", "",
+           f"生成时间：{now_iso()}", "",
+           "| 计划 | 状态 | 源文件 | 进度 | 进行中 | 看板 |", "|---|---|---|---|---|---|"]
+    for name, pdir, meta in plans_mod.all_plans(root):
+        states, _, _ = reduce_states(load_events(pdir))
+        ids = plan_task_ids(pdir) | set(states)
+        done = sum(1 for t in ids if states.get(t) in TERMINAL)
+        busy = sorted((t for t in ids if states.get(t) in HOLDING_STATES), key=task_sort_key)
+        out.append(f"| **{name}** | {meta.get('status', '?')} | `{meta.get('source', '')}` | {done}/{len(ids)} | "
+                   f"{' '.join(busy) or '—'} | [board](plans/{name}/board.md) |")
+    (root / INDEX_NAME).write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def task_sort_key(t: str):
+    head, _, tail = t.partition("-")
+    return (head, int(tail) if tail.isdigit() else 0)
 
 
 def linear_allowed(current: str, target: str) -> bool:
@@ -445,12 +473,24 @@ def claim_warnings(args, task: str, states: dict[str, str], holders: dict[str, s
     if not mine:
         return warnings
     shared_files = _ownership_module().shared_files
-    for other, other_agent in sorted(holders.items()):
-        if other == task or other_agent == args.agent or states.get(other) not in HOLDING_STATES:
+    # 本计划 + 其它 active 计划：跨计划同样只警告 + CONFLICT，不拦截
+    scopes = [(args.plan_name, plan, states, holders)]
+    for name, pdir, _ in plans_mod.active_plans(args.root):
+        if name == args.plan_name or not (pdir / plans_mod.DOC_NAME).is_file():
             continue
-        hits = shared_files(mine, plan.get(other, {}).get("files") or [])
-        if hits:
-            warnings.append((other_agent, f"{task} 与 {other}（{other_agent} 持有）改动文件重叠：{', '.join(hits)}；请串行或归同一 agent"))
+        other_events = load_events(pdir)
+        scopes.append((name, parse_plan(pdir / plans_mod.DOC_NAME), reduce_states(other_events)[0],
+                       current_holders(other_events)))
+    for name, scope_plan, scope_states, scope_holders in scopes:
+        for other, other_agent in sorted(scope_holders.items()):
+            if (name == args.plan_name and other == task) or other_agent == args.agent \
+                    or scope_states.get(other) not in HOLDING_STATES:
+                continue
+            hits = shared_files(mine, scope_plan.get(other, {}).get("files") or [])
+            if hits:
+                label = other if name == args.plan_name else f"{name}/{other}"
+                warnings.append((other_agent, f"{args.plan_name}/{task} 与 {label}（{other_agent} 持有）改动文件重叠："
+                                              f"{', '.join(hits)}；请串行或归同一 agent"))
     return warnings
 
 
@@ -477,7 +517,7 @@ def notify_conflicts(args, task: str, warnings: list[tuple[str, str]]) -> None:
             continue
         message = argparse.Namespace(
             root=args.root, sender=args.agent, recipient=other_agent, type="CONFLICT",
-            task=task, body=text, refs=task,
+            task=task, body=text, refs=task, plan=args.plan_name,
         )
         with contextlib.redirect_stdout(io.StringIO()):
             bus.cmd_send(message)
@@ -486,7 +526,7 @@ def notify_conflicts(args, task: str, warnings: list[tuple[str, str]]) -> None:
 
 def cmd_transition(args, kind: str) -> int:
     """claim/start/submit/done 的通用转移执行（允许前跳，无验收门）。"""
-    root: Path = args.root
+    root: Path = args.pdir
     events = load_events(root)
     states, _, _ = reduce_states(events)
     current = states.get(args.task, "pending")
@@ -520,13 +560,13 @@ def cmd_transition(args, kind: str) -> int:
 
 def cmd_block(args) -> int:
     """block：任意非终态 → blocked。"""
-    states, _, _ = reduce_states(load_events(args.root))
+    states, _, _ = reduce_states(load_events(args.pdir))
     current = states.get(args.task, "pending")
     if current not in BLOCKABLE:
         print(f"✗ {args.task} 当前为 {current}，不可 block", file=sys.stderr)
         return 2
     entry = append_event(
-        args.root, task=args.task, **{"from": current, "to": "blocked"},
+        args.pdir, task=args.task, **{"from": current, "to": "blocked"},
         agent=args.agent, note=args.reason,
     )
     print(f"✓ {args.task}: {current} → blocked  #{entry['seq']}  原因：{args.reason}")
@@ -535,13 +575,13 @@ def cmd_block(args) -> int:
 
 def cmd_fail(args) -> int:
     """fail：任意非终态 → failed。"""
-    states, _, _ = reduce_states(load_events(args.root))
+    states, _, _ = reduce_states(load_events(args.pdir))
     current = states.get(args.task, "pending")
     if current not in FAILABLE:
         print(f"✗ {args.task} 当前为 {current}，不可 fail", file=sys.stderr)
         return 2
     entry = append_event(
-        args.root, task=args.task, **{"from": current, "to": "failed"},
+        args.pdir, task=args.task, **{"from": current, "to": "failed"},
         agent=args.agent, note=args.reason,
     )
     print(f"✓ {args.task}: {current} → failed  #{entry['seq']}  原因：{args.reason}")
@@ -550,13 +590,13 @@ def cmd_fail(args) -> int:
 
 def cmd_revoke(args) -> int:
     """revoke：终态（done/failed）→ active，追加补偿事件（历史不删，供纠错/反证）。"""
-    states, _, _ = reduce_states(load_events(args.root))
+    states, _, _ = reduce_states(load_events(args.pdir))
     current = states.get(args.task, "pending")
     if current not in TERMINAL:
         print(f"✗ {args.task} 当前为 {current}，只有 done/failed 才能 revoke", file=sys.stderr)
         return 2
     entry = append_event(
-        args.root, task=args.task, **{"from": current, "to": "active"},
+        args.pdir, task=args.task, **{"from": current, "to": "active"},
         agent=args.agent, note=args.reason,
     )
     print(f"✓ {args.task}: {current} → active（撤销）  #{entry['seq']}  原因：{args.reason}")
@@ -582,11 +622,11 @@ def cmd_seed(args) -> int:
         if legacy:
             note = f"{note}  {legacy}"
         append_event(
-            args.root, task=task, **{"from": None, "to": state},
+            args.pdir, task=task, **{"from": None, "to": state},
             agent=spec.get("agent", "audit"), note=note,
         )
         count += 1
-    print(f"✓ 已灌入 {count} 条基线事件 → {events_path(args.root)}")
+    print(f"✓ 已灌入 {count} 条基线事件 → {events_path(args.pdir)}")
     return 0
 
 
@@ -595,7 +635,7 @@ def cmd_seed(args) -> int:
 
 def cmd_status(args) -> int:
     """status：打印单任务状态与备注。"""
-    states, notes, updated = reduce_states(load_events(args.root))
+    states, notes, updated = reduce_states(load_events(args.pdir))
     state = states.get(args.task, "pending")
     print(f"{args.task}  状态={state}  最后更新={updated.get(args.task, '-')}")
     for item in notes.get(args.task, []):
@@ -605,7 +645,7 @@ def cmd_status(args) -> int:
 
 def cmd_list(args) -> int:
     """list：列出任务状态（可按状态/批次过滤）。"""
-    states, notes, updated = reduce_states(load_events(args.root))
+    states, notes, updated = reduce_states(load_events(args.pdir))
     plan = parse_plan(args.plan) if args.plan else {}
     ids = sorted(
         set(plan) | set(states),
@@ -637,7 +677,7 @@ def cmd_list(args) -> int:
 
 def cmd_log(args) -> int:
     """log：打印事件流（可过滤任务）。"""
-    events = load_events(args.root)
+    events = load_events(args.pdir)
     if args.task:
         events = [e for e in events if e.get("task") == args.task]
     if args.n > 0:
@@ -656,7 +696,7 @@ def cmd_log(args) -> int:
 
 def cmd_board(args) -> int:
     """board：生成看板（按批次分组，状态来自事件日志）。"""
-    states, notes, updated = reduce_states(load_events(args.root))
+    states, notes, updated = reduce_states(load_events(args.pdir))
     plan = parse_plan(args.plan)
     ids = sorted(set(plan) | set(states), key=lambda t: (t.split("-")[0], int(t.split("-")[1])))
     where = _lanes_module().lane_of(_lanes_module().parse_lanes(args.plan))
@@ -704,7 +744,7 @@ def cmd_board(args) -> int:
 def cmd_gantt_lanes(args, lanes: dict, sync: list) -> int:
     """gantt（车道版）：车道 × 推导波次；波次 = 车道顺序 + 同步点的最长路径时间槽。"""
     lanes_mod = _lanes_module()
-    states, _, _ = reduce_states(load_events(args.root))
+    states, _, _ = reduce_states(load_events(args.pdir))
     preds = lanes_mod.predecessors(lanes, sync)
     slot, cyclic = lanes_mod.schedule(preds)
     if cyclic:
@@ -761,7 +801,7 @@ def cmd_gantt(args) -> int:
     if not waves:
         print("✗ 未能从计划文档解析出波次（§4.3 格式变化？）", file=sys.stderr)
         return 2
-    states, _, _ = reduce_states(load_events(args.root))
+    states, _, _ = reduce_states(load_events(args.pdir))
 
     chain_order: list[str] = []
     for wave in sorted(waves, key=lambda w: int(w[1:])):
@@ -831,7 +871,7 @@ def spec_hits_path(spec: str, path: str) -> bool:
 
 def cmd_reconcile(args) -> int:
     """reconcile：plan（勾选）× 事件日志 × git 工作树 三路对账。"""
-    states, _, _ = reduce_states(load_events(args.root))
+    states, _, _ = reduce_states(load_events(args.pdir))
     plan = parse_plan(args.plan)
     changed = git_changed_files(args.repo) if not args.no_git else []
     has_checks = any(info.get("checked") for info in plan.values())
@@ -871,7 +911,7 @@ def cmd_reconcile(args) -> int:
     out: list[str] = []
     out.append("# 对账报告（生成物，勿手改）")
     out.append("")
-    out.append(f"生成时间：{now_iso()}　计划：{args.plan}　事件数：{len(load_events(args.root))}")
+    out.append(f"生成时间：{now_iso()}　计划：{args.plan}　事件数：{len(load_events(args.pdir))}")
 
     def section(title: str, items: list, fmt) -> None:
         out.append("")
@@ -904,17 +944,120 @@ def cmd_reconcile(args) -> int:
     return 1 if actionable else 0
 
 
+# ---------------------------------------------------------------- 计划生命周期
+
+
+def cmd_plan(args) -> int:
+    """plan list / open / close / sync：管理 <root>/plans/<name>/。"""
+    root, repo = args.root, args.repo
+    if args.plan_cmd == "list":
+        rows = plans_mod.all_plans(root)
+        if not rows:
+            print("（还没有计划）")
+        for name, pdir, meta in rows:
+            print(f"{name:<12} {meta.get('status', '?'):<7} {meta.get('source', '')}  → {pdir}")
+        return 0
+    name = args.name
+    if not plans_mod.NAME_RE.match(name):
+        print(f"✗ 计划名「{name}」非法（字母数字开头，只含 . _ -）", file=sys.stderr)
+        return 2
+    pdir = plans_mod.plan_dir(root, name)
+    meta = plans_mod.read_meta(pdir)
+    if args.plan_cmd == "open":
+        if meta:
+            print(f"✗ 计划 {name} 已存在（{meta.get('status')}）", file=sys.stderr)
+            return 2
+        source = Path(args.source)
+        absolute = source if source.is_absolute() else Path.cwd() / source
+        if not absolute.is_file():
+            print(f"✗ 计划源文件不存在：{args.source}", file=sys.stderr)
+            return 2
+        try:
+            rel = absolute.resolve().relative_to(repo.resolve())
+        except ValueError:
+            print(f"✗ 计划源文件须在仓库内：{args.source}", file=sys.stderr)
+            return 2
+        plans_mod.write_meta(pdir, {"name": name, "source": str(rel), "status": "active",
+                                    "opened": now_iso(), "closed": None})
+        events_path(pdir).touch()
+        plans_mod.sync_copy(repo, pdir)
+        ids = plan_task_ids(pdir)
+        clash = sorted({t for other, odir, _ in plans_mod.active_plans(root) if other != name
+                        for t in ids & plan_task_ids(odir)})
+        if clash:
+            print(f"⚠ 任务 ID 与其它 active 计划重名：{', '.join(clash)}——这些任务写命令须带 --plan", file=sys.stderr)
+        args.pdir = pdir
+        refresh_views(args)
+        print(f"✓ 已开计划 {name}：{rel} → {pdir}/{plans_mod.DOC_NAME}（{len(ids)} 个任务）")
+        return 0
+    if not meta:
+        print(f"✗ 未知计划 {name}", file=sys.stderr)
+        return 2
+    args.pdir = pdir
+    if args.plan_cmd == "sync":
+        note = plans_mod.sync_copy(repo, pdir)
+        print(f"✓ {note}" if note else f"✓ {name} 副本已是最新")
+        refresh_views(args)
+        return 0
+    # close
+    if meta.get("status") == "closed":
+        print(f"✓ 计划 {name} 早已 closed")
+        return 0
+    plans_mod.sync_copy(repo, pdir)
+    states, _, _ = reduce_states(load_events(pdir))
+    open_ids = sorted((t for t in plan_task_ids(pdir) | set(states) if states.get(t, "pending") not in TERMINAL),
+                      key=task_sort_key)
+    refresh_views(args)  # 冻结前最后一次生成视图
+    meta.update(status="closed", closed=now_iso())
+    plans_mod.write_meta(pdir, meta)
+    write_index(root)
+    print(f"✓ 计划 {name} 已 closed，副本与视图冻结")
+    if open_ids:
+        print(f"⚠ 仍有 {len(open_ids)} 个任务未终结：{', '.join(open_ids)}——要接着做的用 "
+              f"`task_state.py --plan {name} migrate <task> --to <新计划> --agent <ID>` 转过去", file=sys.stderr)
+    return 0
+
+
+def cmd_migrate(args) -> int:
+    """migrate：把任务转到另一个计划——原计划记 →migrated（终态），目标计划按原状态续记一条事件。"""
+    target = plans_mod.plan_dir(args.root, args.to)
+    if not plans_mod.read_meta(target):
+        print(f"✗ 未知目标计划 {args.to}", file=sys.stderr)
+        return 2
+    if args.to == args.plan_name:
+        print("✗ 源计划与目标计划相同", file=sys.stderr)
+        return 2
+    states, notes, _ = reduce_states(load_events(args.pdir))
+    current = states.get(args.task, "pending")
+    if current == "migrated":
+        print(f"✗ {args.task} 已迁出过", file=sys.stderr)
+        return 2
+    entry = append_event(args.pdir, task=args.task, **{"from": current, "to": "migrated"},
+                         agent=args.agent, note=f"迁入计划 {args.to}；{args.note}".rstrip("；"))
+    carried = append_event(target, task=args.task, **{"from": None, "to": current}, agent=args.agent,
+                           note=f"自计划 {args.plan_name} 迁入（#{entry['seq']}）；原备注：" + "；".join(notes.get(args.task, [])))
+    print(f"✓ {args.plan_name}/{args.task} → migrated #{entry['seq']}；{args.to}/{args.task} 续记 {current} #{carried['seq']}")
+    if plans_mod.read_meta(args.pdir).get("status") == "active":
+        refresh_views(args)
+    target_args = argparse.Namespace(**vars(args))
+    target_args.pdir, target_args.plan_name = target, args.to
+    refresh_views(target_args)
+    return 0
+
+
 # ---------------------------------------------------------------- CLI
 
 
 WRITE_COMMANDS = {"claim", "start", "submit", "done", "block", "fail", "unblock", "revoke", "seed"}
+TASK_COMMANDS = WRITE_COMMANDS - {"seed"} | {"status", "migrate"}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="任务状态跟踪：事件日志为唯一真源，验收是灯不是门，视图全部生成。")
     parser.add_argument("--root", type=Path, default=None, help="协调目录（默认 <git 根>/.agentic）")
     parser.add_argument("--repo", type=Path, default=None, help="仓库根（默认从 --root 向上找 .git）")
-    parser.add_argument("--plan", type=Path, default=None, help="计划文档路径")
+    parser.add_argument("--plan", default=None,
+                        help=f"计划名（<root>/plans/<name>）；缺省取 ${plans_mod.ENV_PLAN}，再按任务 ID 在 active 计划里唯一匹配")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     def add_agent(p):
@@ -968,6 +1111,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("file", help="基线 JSON 路径")
     p.set_defaults(func=cmd_seed)
 
+    p = sub.add_parser("migrate", help="把任务转到另一个计划（原计划记 migrated）")
+    add_task(p); add_agent(p)
+    p.add_argument("--to", required=True, help="目标计划名")
+    p.add_argument("--note", default="", help="可选备注")
+    p.set_defaults(func=cmd_migrate)
+
+    p = sub.add_parser("plan", help="计划生命周期：list / open / close / sync")
+    plan_sub = p.add_subparsers(dest="plan_cmd", required=True)
+    q = plan_sub.add_parser("list", help="列出全部计划")
+    q = plan_sub.add_parser("open", help="开新计划：建 plans/<name>/ 并复制计划源文件")
+    q.add_argument("name"); q.add_argument("--source", required=True, help="计划源文件（仓库内，如 Doc/godot/plans/x.md）")
+    q = plan_sub.add_parser("close", help="关闭计划：冻结副本与视图，列出未终结任务")
+    q.add_argument("name")
+    q = plan_sub.add_parser("sync", help="立即把计划源文件同步到副本并重生成视图")
+    q.add_argument("name")
+    p.set_defaults(func=cmd_plan)
+
     p = sub.add_parser("status", help="查看单任务状态与备注")
     add_task(p)
     p.set_defaults(func=cmd_status)
@@ -1008,19 +1168,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.repo is None:
         args.repo = infer_repo(args.root)
     args.repo = Path(args.repo)
-    if args.plan is not None:
-        args.plan = Path(args.plan)
-    elif args.cmd in VIEW_NAMES:
-        args.plan = resolve_plan(args)
-        if args.plan is None or not args.plan.is_file():
-            print(f"✗ 未找到计划：传 --plan 或在 {args.root / TASKS_DIR / CONFIG_NAME} 配 plan", file=sys.stderr)
-            return 2
     agent = getattr(args, "agent", None)
     if agent is not None:
         error = validate_agent_id(agent)
         if error:
             print(f"✗ {error}", file=sys.stderr)
             return 2
+    if args.cmd == "plan":
+        return args.func(args)
+    name, error = plans_mod.resolve(args.root, args.plan, getattr(args, "task", None)
+                                    if args.cmd in TASK_COMMANDS else None, plan_task_ids)
+    if name is None:
+        print(f"✗ {error}", file=sys.stderr)
+        return 2
+    args.plan_name, args.pdir = name, plans_mod.plan_dir(args.root, name)
+    if args.cmd in WRITE_COMMANDS and plans_mod.read_meta(args.pdir).get("status") == "closed":
+        print(f"✗ 计划 {name} 已 closed，不再接受写事件（要续做先 migrate 到 active 计划）", file=sys.stderr)
+        return 2
+    args.plan = resolve_plan(args)
+    if args.cmd in WRITE_COMMANDS:
+        plans_mod.sync_copy(args.repo, args.pdir)  # 认领检查读的是副本，先对齐源文件
     code = args.func(args)
     if code == 0 and args.cmd in WRITE_COMMANDS:
         refresh_views(args)

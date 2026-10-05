@@ -2,21 +2,21 @@
 """消息总线 CLI·agent 间通讯（通用 Agentic Workflow 版）。
 
 两个 append-only 文件：
-  <root>/events.jsonl          全局权威事件流（所有消息都落这里）
-  <root>/inbox/<agent_id>.jsonl 定向收件箱（仅点对点消息落这里）
+  <root>/bus/log.jsonl              全局权威消息流（所有消息都落这里；全局一份，不按计划分）
+  <root>/bus/inbox/<agent_id>.jsonl 定向收件箱（仅点对点消息落这里）
 
 消息结构：
-  {"seq", "ts", "from", "to", "type", "task_id", "body", "refs"}
+  {"seq", "ts", "from", "to", "type", "task_id", "body", "refs"[, "plan"]}
 
 合法类型：CLAIM / RELEASE / CONFLICT / PROPOSE / ACCEPT / REJECT /
          REQUEST_HELP / INTERRUPT / HANDOFF / BLOCKED / DONE（不合法退出 2）。
 
 子命令：
   send --from <id> --to <id> --type <TYPE> [--task <id>] [--body <文本>] [--refs a,b]
-       同时写入 to 的收件箱与 events.jsonl；to=* 表示广播（只写 events.jsonl）。
-  read --agent <id> [--since <seq>]   读取某 agent 的收件箱（默认全部）。
+       同时写入 to 的收件箱与 log.jsonl；to=* 表示广播（只写 log.jsonl）。--plan 可选标注所属计划。
+  read --agent <id> [--since <seq>]   读取某 agent 的收件箱 + 他人广播（默认全部）。
   read --agent <id> --unread          只读游标之后的新消息并推进游标（跨厂商轮询用）。
-  tail [--n N]                        读 events.jsonl 尾部 N 条（默认 20）。
+  tail [--n N]                        读 log.jsonl 尾部 N 条（默认 20）。
 
 append-only 文件用单次 O_APPEND 写入保证原子性（不以 os.replace 重写，避免破坏追加语义）。
 
@@ -41,7 +41,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-EVENTS_NAME = "events.jsonl"
+BUS_DIR = "bus"
+EVENTS_NAME = "log.jsonl"
 INBOX_DIR = "inbox"
 DEFAULT_ROOT = ".agentic"
 BROADCAST = "*"
@@ -100,10 +101,19 @@ def iter_jsonl(path: Path):
                 continue
 
 
+def bus_dir(root: Path) -> Path:
+    """总线全局一份：<root>/bus/（不随计划分开——一个 agent 可能同时参与多个计划）。"""
+    return root / BUS_DIR
+
+
+def log_path(root: Path) -> Path:
+    return bus_dir(root) / EVENTS_NAME
+
+
 def next_seq(root: Path) -> int:
-    """扫描 events.jsonl 取最大 seq，返回下一个可用序号。"""
+    """扫描 bus/log.jsonl 取最大 seq，返回下一个可用序号。"""
     last = 0
-    for entry in iter_jsonl(root / EVENTS_NAME):
+    for entry in iter_jsonl(log_path(root)):
         seq = entry.get("seq")
         if isinstance(seq, int) and seq > last:
             last = seq
@@ -113,8 +123,8 @@ def next_seq(root: Path) -> int:
 @contextlib.contextmanager
 def bus_lock(root: Path):
     """取 seq 与追加在同一把排他锁内，避免多会话撞号。"""
-    root.mkdir(parents=True, exist_ok=True)
-    with open(root / LOCK_NAME, "a") as handle:
+    bus_dir(root).mkdir(parents=True, exist_ok=True)
+    with open(bus_dir(root) / LOCK_NAME, "a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -124,11 +134,11 @@ def bus_lock(root: Path):
 
 def inbox_path(root: Path, agent: str) -> Path:
     """子 agent ID 含 /，落盘时换成 __，避免变成子目录。"""
-    return root / INBOX_DIR / f"{agent.replace('/', '__')}.jsonl"
+    return bus_dir(root) / INBOX_DIR / f"{agent.replace('/', '__')}.jsonl"
 
 
 def cursor_path(root: Path, agent: str) -> Path:
-    return root / INBOX_DIR / f"{agent.replace('/', '__')}.cursor"
+    return bus_dir(root) / INBOX_DIR / f"{agent.replace('/', '__')}.cursor"
 
 
 def bad_agent_id(agent: str) -> bool:
@@ -176,13 +186,15 @@ def cmd_send(args) -> int:
             "body": args.body or "",
             "refs": refs,
         }
-        append_jsonl(args.root / EVENTS_NAME, entry)
+        if getattr(args, "plan", None):
+            entry["plan"] = args.plan
+        append_jsonl(log_path(args.root), entry)
         if args.recipient != BROADCAST:
             append_jsonl(inbox_path(args.root, args.recipient), entry)
     if args.recipient != BROADCAST:
         print(f"✓ 已发送 #{entry['seq']} {message_type} {args.sender}→{args.recipient}（投递收件箱 + 事件流）")
     else:
-        print(f"✓ 已广播 #{entry['seq']} {message_type} {args.sender}→*（仅事件流）")
+        print(f"✓ 已广播 #{entry['seq']} {message_type} {args.sender}→*（总日志；所有人 read 时可见）")
     return 0
 
 
@@ -192,7 +204,11 @@ def cmd_read(args) -> int:
     cursor = cursor_path(args.root, args.agent)
     if args.unread and cursor.is_file():
         since = max(since, int(cursor.read_text(encoding="utf-8").strip() or 0))
+    # 收件箱（点对点）+ 别人发的广播（只落总日志），按 seq 合并
     messages = [entry for entry in iter_jsonl(inbox_path(args.root, args.agent)) if entry.get("seq", 0) > since]
+    messages += [entry for entry in iter_jsonl(log_path(args.root))
+                 if entry.get("to") == BROADCAST and entry.get("from") != args.agent and entry.get("seq", 0) > since]
+    messages.sort(key=lambda m: m.get("seq", 0))
     if args.unread and messages:
         cursor.write_text(str(max(int(m.get("seq", 0)) for m in messages)), encoding="utf-8")
     if args.json:
@@ -208,7 +224,7 @@ def cmd_read(args) -> int:
 
 def cmd_tail(args) -> int:
     """读取全局事件流尾部。"""
-    events = list(iter_jsonl(args.root / EVENTS_NAME))
+    events = list(iter_jsonl(log_path(args.root)))
     tail = events[-args.n :] if args.n > 0 else []
     if args.json:
         print(json.dumps(tail, ensure_ascii=False, indent=2))
@@ -234,6 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.add_argument("--task", default=None, help="关联任务 ID（可选）")
     p_send.add_argument("--body", default=None, help="消息正文（可选）")
     p_send.add_argument("--refs", default=None, help="引用，逗号分隔（可选）")
+    p_send.add_argument("--plan", default=None, help="关联计划名（可选，便于按计划过滤）")
     p_send.set_defaults(func=cmd_send)
 
     p_read = sub.add_parser("read", help="读取某 agent 的收件箱")
