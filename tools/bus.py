@@ -15,9 +15,14 @@
   send --from <id> --to <id> --type <TYPE> [--task <id>] [--body <文本>] [--refs a,b]
        同时写入 to 的收件箱与 events.jsonl；to=* 表示广播（只写 events.jsonl）。
   read --agent <id> [--since <seq>]   读取某 agent 的收件箱（默认全部）。
+  read --agent <id> --unread          只读游标之后的新消息并推进游标（跨厂商轮询用）。
   tail [--n N]                        读 events.jsonl 尾部 N 条（默认 20）。
 
 append-only 文件用单次 O_APPEND 写入保证原子性（不以 os.replace 重写，避免破坏追加语义）。
+
+agent ID 须为 <厂商>-<会话/实例>[/<子agent>]（与 task_state.py 同规则），广播用 *。
+收件箱是正式通讯渠道：任何厂商的 agent 都能读写；厂商自带的会话消息（如 Claude Code
+SendMessage）只用于「叫醒对方去读收件箱」，不承载需要留痕的内容。
 
 默认 <root> = <git 仓库根>/.agentic。
 
@@ -27,7 +32,10 @@ append-only 文件用单次 O_APPEND 写入保证原子性（不以 os.replace �
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -37,6 +45,8 @@ EVENTS_NAME = "events.jsonl"
 INBOX_DIR = "inbox"
 DEFAULT_ROOT = ".agentic"
 BROADCAST = "*"
+LOCK_NAME = ".bus.lock"
+AGENT_ID_RE = re.compile(r"^[a-z]+-[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$")
 MESSAGE_TYPES = (
     "CLAIM",
     "RELEASE",
@@ -100,6 +110,31 @@ def next_seq(root: Path) -> int:
     return last + 1
 
 
+@contextlib.contextmanager
+def bus_lock(root: Path):
+    """取 seq 与追加在同一把排他锁内，避免多会话撞号。"""
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / LOCK_NAME, "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def inbox_path(root: Path, agent: str) -> Path:
+    """子 agent ID 含 /，落盘时换成 __，避免变成子目录。"""
+    return root / INBOX_DIR / f"{agent.replace('/', '__')}.jsonl"
+
+
+def cursor_path(root: Path, agent: str) -> Path:
+    return root / INBOX_DIR / f"{agent.replace('/', '__')}.cursor"
+
+
+def bad_agent_id(agent: str) -> bool:
+    return not AGENT_ID_RE.match(agent or "")
+
+
 def now_iso() -> str:
     """当前时间的 ISO 8601（UTC，秒级）。"""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -123,20 +158,28 @@ def cmd_send(args) -> int:
     if message_type not in MESSAGE_TYPES:
         print(f"非法消息类型：{args.type}（合法值：{'/'.join(MESSAGE_TYPES)}）", file=sys.stderr)
         return 2
+    for role, agent in (("--from", args.sender), ("--to", args.recipient)):
+        if agent == BROADCAST and role == "--to":
+            continue
+        if bad_agent_id(agent):
+            print(f"非法 agent ID {role}「{agent}」：须为 <厂商>-<会话/实例>[/<子agent>]，如 claude-endlessspace-d5", file=sys.stderr)
+            return 2
     refs = [item.strip() for item in (args.refs or "").split(",") if item.strip()]
-    entry = {
-        "seq": next_seq(args.root),
-        "ts": now_iso(),
-        "from": args.sender,
-        "to": args.recipient,
-        "type": message_type,
-        "task_id": args.task or None,
-        "body": args.body or "",
-        "refs": refs,
-    }
-    append_jsonl(args.root / EVENTS_NAME, entry)
+    with bus_lock(args.root):
+        entry = {
+            "seq": next_seq(args.root),
+            "ts": now_iso(),
+            "from": args.sender,
+            "to": args.recipient,
+            "type": message_type,
+            "task_id": args.task or None,
+            "body": args.body or "",
+            "refs": refs,
+        }
+        append_jsonl(args.root / EVENTS_NAME, entry)
+        if args.recipient != BROADCAST:
+            append_jsonl(inbox_path(args.root, args.recipient), entry)
     if args.recipient != BROADCAST:
-        append_jsonl(args.root / INBOX_DIR / f"{args.recipient}.jsonl", entry)
         print(f"✓ 已发送 #{entry['seq']} {message_type} {args.sender}→{args.recipient}（投递收件箱 + 事件流）")
     else:
         print(f"✓ 已广播 #{entry['seq']} {message_type} {args.sender}→*（仅事件流）")
@@ -146,7 +189,12 @@ def cmd_send(args) -> int:
 def cmd_read(args) -> int:
     """读取某个 agent 的收件箱。"""
     since = args.since if args.since is not None else 0
-    messages = [entry for entry in iter_jsonl(args.root / INBOX_DIR / f"{args.agent}.jsonl") if entry.get("seq", 0) > since]
+    cursor = cursor_path(args.root, args.agent)
+    if args.unread and cursor.is_file():
+        since = max(since, int(cursor.read_text(encoding="utf-8").strip() or 0))
+    messages = [entry for entry in iter_jsonl(inbox_path(args.root, args.agent)) if entry.get("seq", 0) > since]
+    if args.unread and messages:
+        cursor.write_text(str(max(int(m.get("seq", 0)) for m in messages)), encoding="utf-8")
     if args.json:
         print(json.dumps(messages, ensure_ascii=False, indent=2))
         return 0
@@ -191,6 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_read = sub.add_parser("read", help="读取某 agent 的收件箱")
     p_read.add_argument("--agent", required=True, help="收件方 agent ID")
     p_read.add_argument("--since", type=int, default=None, help="只读 seq 大于该值的消息")
+    p_read.add_argument("--unread", action="store_true", help="只读游标之后的新消息并推进游标")
     p_read.add_argument("--json", action="store_true", help="以 JSON 输出")
     p_read.set_defaults(func=cmd_read)
 

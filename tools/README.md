@@ -21,6 +21,12 @@ AI agent（Claude / Codex / GPT 等）协作，并保证**同一文件同一时�
 
 约定：所有 `--root`、`--plan`、文件路径都以**仓库相对路径**表示，避免把本机绝对路径写死。
 
+**agent ID**（task_state / bus 强制校验）：`<厂商>-<会话/实例>[/<子agent>]`，如 `claude-endlessspace-d5`、
+`codex-1`、`claude-endlessspace-d5/e2`。裸厂商名（`claude`）拒绝——日志里分不清是谁，就无法定向协调。
+
+**并发**：task_state 与 bus 的「取 seq + 追加」都在 `flock` 排他锁内完成（`tasks/.events.lock`、`.bus.lock`），
+多会话同时写不会撞号。
+
 ## 脚本
 
 ### 1. `check_file_ownership.py` — 文件所有权矩阵重叠校验
@@ -77,7 +83,8 @@ python3 tools/file_lock.py release "Godot/presentation/shipyard/shipyard_view.gd
 
 ### 4. `bus.py` — 消息总线
 
-agent 间通讯。所有消息写入 `events.jsonl`；点对点消息额外写入 `inbox/<to>.jsonl`；`--to '*'`
+agent 间通讯的**正式渠道**（跨厂商：任何能跑 Python 的 agent 都能读写）。厂商自带的会话消息
+（如 Claude Code SendMessage）只用来叫醒对方去读收件箱。所有消息写入 `events.jsonl`；点对点消息额外写入 `inbox/<to>.jsonl`；`--to '*'`
 为广播（只写事件流）。合法类型：`CLAIM / RELEASE / CONFLICT / PROPOSE / ACCEPT / REJECT /
 REQUEST_HELP / INTERRUPT / HANDOFF / BLOCKED / DONE`。
 
@@ -85,6 +92,7 @@ REQUEST_HELP / INTERRUPT / HANDOFF / BLOCKED / DONE`。
 python3 tools/bus.py send --from claude-1 --to codex-2 --type CONFLICT --task P2-1 \
     --body "shipyard_view.gd 与你的任务重叠" --refs "P2-1,P3-1"
 python3 tools/bus.py read --agent codex-2 --since 0
+python3 tools/bus.py read --agent codex-2 --unread   # 只读新消息并推进游标（inbox/<id>.cursor）
 python3 tools/bus.py tail --n 20
 ```
 
@@ -136,6 +144,13 @@ python3 tools/task_state.py --plan $PLAN seed baseline.json   # 审计收口：�
 ```
 
 `--note` 是自由文本；兼容旧写法 `--evidence LEVEL:PATH`（折叠成路径串并入备注显示，**不校验**）。
+
+**视图自动刷新**：每次写事件（claim/start/submit/done/block/fail/unblock/revoke/seed）成功后自动重生成
+`<root>/tasks/{board,gantt,reconcile}.md`。计划路径取 `--plan`，缺省读 `<root>/tasks/config.json`：
+
+```json
+{"plan": "Doc/godot/plans/PLAN.md"}
+```
 
 `reconcile` 输出四类差异：计划打勾但非 done / 有事件但未打勾 /
 未登记却已改动其文件 / 工作树改动未归属任何任务。**这是体检报告，不是闸门**。

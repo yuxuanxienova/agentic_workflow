@@ -23,6 +23,12 @@
   board / gantt / reconcile               生成视图（board=看板，gantt=链×波次，reconcile=对账）
   log [--task T] [--n N]                  看事件流
 
+身份（不可区分即不可协调）：--agent 必须是 `<厂商>-<会话/实例>`，如 `claude-endlessspace-d5`、
+`codex-1`；子 agent 追加 `/<名>`，如 `claude-endlessspace-d5/e2`。裸厂商名（claude/codex/trae…）拒绝。
+
+视图自动刷新：每次写事件后自动重生成 <root>/tasks/{board,gantt,reconcile}.md。计划路径取 --plan，
+缺省读 <root>/tasks/config.json 的 "plan"（仓库相对路径）；都没有则跳过刷新并提示。
+
 默认 <root> = <git 仓库根>/.agentic。
 
 退出码：0 成功；1 reconcile 发现差异（报告信号，非阻塞）；2 用法或数据错误（如非法转移）。
@@ -31,7 +37,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import fnmatch
+import io
 import json
 import re
 import subprocess
@@ -41,6 +50,12 @@ from pathlib import Path
 
 TASKS_DIR = "tasks"
 EVENTS_NAME = "events.jsonl"
+CONFIG_NAME = "config.json"
+LOCK_NAME = ".events.lock"
+VIEW_NAMES = {"board": "board.md", "gantt": "gantt.md", "reconcile": "reconcile.md"}
+
+# <厂商>-<会话/实例>[/<子 agent>]；厂商为小写字母，实例段至少一个字符。
+AGENT_ID_RE = re.compile(r"^[a-z]+-[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$")
 DEFAULT_ROOT = ".agentic"
 
 STATE_ORDER = ("pending", "claimed", "active", "verify", "done")
@@ -53,6 +68,7 @@ LINEAR_TARGETS = {
     "start": "active",
     "submit": "verify",
     "done": "done",
+    "unblock": "active",
 }
 RANK = {state: i for i, state in enumerate(STATE_ORDER)}   # pending=0 … done=4
 TERMINAL = {"done", "failed"}
@@ -285,19 +301,76 @@ def reduce_states(events: list[dict]) -> tuple[dict[str, str], dict[str, list[st
     return states, notes, updated
 
 
+@contextlib.contextmanager
+def events_lock(root: Path):
+    """多会话并发写：取 seq 与追加必须在同一把排他锁内，否则会撞号。"""
+    lock_path = root / TASKS_DIR / LOCK_NAME
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def append_event(root: Path, **fields) -> dict:
-    """按统一 schema 追加一条事件并返回它。"""
-    entry = {
-        "seq": next_seq(root),
-        "ts": now_iso(),
-        "task": fields.get("task"),
-        "from": fields.get("from"),
-        "to": fields.get("to"),
-        "agent": fields.get("agent"),
-        "note": fields.get("note") or "",
-    }
-    append_jsonl(events_path(root), entry)
+    """按统一 schema 追加一条事件并返回它（持锁取号 + 追加）。"""
+    with events_lock(root):
+        entry = {
+            "seq": next_seq(root),
+            "ts": now_iso(),
+            "task": fields.get("task"),
+            "from": fields.get("from"),
+            "to": fields.get("to"),
+            "agent": fields.get("agent"),
+            "note": fields.get("note") or "",
+        }
+        append_jsonl(events_path(root), entry)
     return entry
+
+
+def validate_agent_id(agent: str) -> str | None:
+    """返回错误信息；合法返回 None。"""
+    if AGENT_ID_RE.match(agent or ""):
+        return None
+    return (
+        f"非法 agent ID「{agent}」：须为 <厂商>-<会话/实例>[/<子agent>]，"
+        "如 claude-endlessspace-d5、codex-1、claude-endlessspace-d5/e2；裸厂商名不可区分会话，拒绝"
+    )
+
+
+def resolve_plan(args) -> Path | None:
+    """--plan 优先；否则读 <root>/tasks/config.json 的 plan（相对仓库根）。"""
+    if args.plan is not None:
+        return args.plan
+    config = args.root / TASKS_DIR / CONFIG_NAME
+    if not config.is_file():
+        return None
+    try:
+        plan = json.loads(config.read_text(encoding="utf-8")).get("plan")
+    except json.JSONDecodeError:
+        return None
+    return (args.repo / plan) if plan else None
+
+
+def refresh_views(args) -> None:
+    """写事件后重生成 board/gantt/reconcile，视图永不过期。失败只提示，不影响写入结果。"""
+    plan = resolve_plan(args)
+    if plan is None or not plan.is_file():
+        print(f"ℹ 未找到计划（--plan 或 {args.root / TASKS_DIR / CONFIG_NAME}），跳过视图刷新", file=sys.stderr)
+        return
+    view_args = argparse.Namespace(**vars(args))
+    view_args.plan = plan
+    view_args.no_git = False
+    renderers = {"board": cmd_board, "gantt": cmd_gantt, "reconcile": cmd_reconcile}
+    for name, render in renderers.items():
+        view_args.out = str(args.root / TASKS_DIR / VIEW_NAMES[name])
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                render(view_args)
+        except Exception as error:  # 视图是派生物，坏了不该连累真源写入
+            print(f"ℹ 视图 {name} 刷新失败：{error}", file=sys.stderr)
 
 
 def linear_allowed(current: str, target: str) -> bool:
@@ -678,6 +751,9 @@ def cmd_reconcile(args) -> int:
 # ---------------------------------------------------------------- CLI
 
 
+WRITE_COMMANDS = {"claim", "start", "submit", "done", "block", "fail", "unblock", "revoke", "seed"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="任务状态跟踪：事件日志为唯一真源，验收是灯不是门，视图全部生成。")
     parser.add_argument("--root", type=Path, default=None, help="协调目录（默认 <git 根>/.agentic）")
@@ -686,7 +762,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     def add_agent(p):
-        p.add_argument("--agent", required=True, help="执行该动作的 agent ID")
+        p.add_argument("--agent", required=True,
+                       help="agent ID：<厂商>-<会话/实例>[/<子agent>]，如 claude-endlessspace-d5")
 
     def add_task(p):
         p.add_argument("task", help="任务 ID，如 P1-1")
@@ -777,7 +854,16 @@ def main(argv: list[str] | None = None) -> int:
     args.repo = Path(args.repo)
     if args.plan is not None:
         args.plan = Path(args.plan)
-    return args.func(args)
+    agent = getattr(args, "agent", None)
+    if agent is not None:
+        error = validate_agent_id(agent)
+        if error:
+            print(f"✗ {error}", file=sys.stderr)
+            return 2
+    code = args.func(args)
+    if code == 0 and args.cmd in WRITE_COMMANDS:
+        refresh_views(args)
+    return code
 
 
 if __name__ == "__main__":
