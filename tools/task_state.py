@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""任务状态跟踪与验收门（通用 Agentic Workflow 版）。
+"""任务状态跟踪（通用 Agentic Workflow 版）。
 
 真源纪律（三层，缺一即乱）：
-  PLAN   计划文档里的任务表——只写「计划」（任务/验收要求/改动文件），**不写状态**。
+  PLAN   计划文档里的任务表——只写「计划」（任务/改动文件），**不写状态**。
   STATE  <root>/tasks/events.jsonl——append-only，每行=一次状态转移，**唯一状态真源**。
   VIEWS  board / gantt / reconcile——全部由本工具生成，**禁止手改**。
 
-状态机（终态不再变化，只能 append 新事件）：
-  pending → claimed → active → verify → done
+状态机（允许前跳以降低摩擦；终态只能靠 revoke 反悔）：
+  pending → claimed → active → verify → done   （可跳级：pending 直接记 done 也允许）
   旁支：非终态 → blocked → active（unblock）；任意非终态 → failed
-  verify 是显式「验收门」：done 必须挂 evidence（`LEVEL:PATH` 形式的证据），
-  且证据等级不得低于计划文档该任务行声明的验收等级（L0/L1/L2 取最大，缺省 L0）。
+  done / failed 是终态；发现判断有误用 `revoke` 追加补偿事件回到 active（历史不删）。
 
-证据格式：`L0:out/.../verify.log` / `L1:Godot/tools/flows/x.json` / `L2:out/godot/parity/x/review.json`
-  PATH 为仓库根相对路径；实体可为文件或目录，done 时校验其真实存在。
+验收是「灯」不是「门」（灰度、快迭代优先）：
+  done **没有任何前置条件**——不强制证据、不比较等级。想留痕就写 `--note`（自由文本，
+  如截图/日志路径），不写也照样能 done。遗漏由 `reconcile` 软报告暴露，再规划补做即可。
 
 子命令：
-  claim / start / submit / done / block / unblock / fail  写事件（append-only）
+  claim / start / submit / done / unblock / revoke    写事件（append-only）
+  block / fail                                        旁支（--reason）
   seed <baseline.json>                    一次性灌基线（审计收口用）
   status <task> / list                    查状态
   board / gantt / reconcile               生成视图（board=看板，gantt=链×波次，reconcile=对账）
@@ -24,7 +25,7 @@
 
 默认 <root> = <git 仓库根>/.agentic。
 
-退出码：0 成功；1 校验不通过（done 证据不合规 / reconcile 发现差异）；2 用法或数据错误。
+退出码：0 成功；1 reconcile 发现差异（报告信号，非阻塞）；2 用法或数据错误（如非法转移）。
 """
 
 from __future__ import annotations
@@ -46,25 +47,20 @@ STATE_ORDER = ("pending", "claimed", "active", "verify", "done")
 BRANCH_STATES = ("blocked", "failed")
 ALL_STATES = STATE_ORDER + BRANCH_STATES
 
-# 线性转移：命令 → {允许的前驱: 目标状态}
-TRANSITIONS = {
-    "claim": {"pending": "claimed"},
-    "start": {"claimed": "active"},
-    "submit": {"active": "verify"},
-    "done": {"verify": "done"},
-    "unblock": {"blocked": "active"},
+# 线性命令 → 目标状态。允许「前跳」：只要目标在状态序上不倒退即可（pending 直接 done 也行）。
+LINEAR_TARGETS = {
+    "claim": "claimed",
+    "start": "active",
+    "submit": "verify",
+    "done": "done",
 }
+RANK = {state: i for i, state in enumerate(STATE_ORDER)}   # pending=0 … done=4
+TERMINAL = {"done", "failed"}
 BLOCKABLE = {"pending", "claimed", "active", "verify", "blocked"}
 FAILABLE = {"pending", "claimed", "active", "verify", "blocked"}
 
-LEVELS = ("L0", "L1", "L2")
-# 验收等级只认「验收」列**开头**的 L0/L1/L2：行文中提及的等级（如「非 L2」「L2 待…」）不算数。
-# 缺省 L0。约定：计划文档「验收」列应以 L0/L1/L2 + 空格开头。
-LEVEL_HEAD_RE = re.compile(r"\s*(L[012])\b")
-EVIDENCE_RE = re.compile(r"^(L[012]):(.+)$")
 TASK_ID_RE = re.compile(r"^[A-Z]+\d+-\d+$")
 OWNERSHIP_HEADER = "改动文件（仓库相对路径）"
-ACCEPTANCE_HEADER = "验收"
 
 MARKERS = {
     "pending": "·",
@@ -184,10 +180,11 @@ def parse_file_cell(cell: str) -> list[str]:
 
 
 def parse_plan(plan_path: Path) -> dict[str, dict]:
-    """解析计划文档任务表 → {任务ID: {batch, title, files, level, checked}}。
+    """解析计划文档任务表 → {任务ID: {batch, title, files, checked}}。
 
-    表头以「分隔行之前那一行」为准，按列标题定位「改动文件」「验收」列；
+    表头以「分隔行之前那一行」为准，按列标题定位「改动文件」列；
     首单元格去掉 ✅ 后匹配任务 ID 的行视为任务行。
+    （不再解析「验收」列——验收已降级为可选自由备注，工具不据此设卡。）
     """
     text = plan_path.read_text(encoding="utf-8").lstrip("\ufeff")
     tasks: dict[str, dict] = {}
@@ -221,20 +218,12 @@ def parse_plan(plan_path: Path) -> dict[str, dict]:
             if idx < len(cells):
                 files = parse_file_cell(cells[idx])
 
-        level = "L0"
-        if ACCEPTANCE_HEADER in headers:
-            idx = headers.index(ACCEPTANCE_HEADER)
-            if idx < len(cells):
-                found = LEVEL_HEAD_RE.match(cells[idx])
-                if found:
-                    level = found.group(1)
         title = cells[1] if len(cells) > 1 else ""
 
         tasks[task_id] = {
             "batch": task_id.split("-")[0],
             "title": title,
             "files": files,
-            "level": level,
             "checked": checked,
         }
     return tasks
@@ -268,10 +257,13 @@ def parse_waves(plan_path: Path) -> dict[str, dict[str, list[str]]]:
 # ---------------------------------------------------------------- 状态归约
 
 
-def reduce_states(events: list[dict]) -> tuple[dict[str, str], dict[str, list[dict]], dict[str, str]]:
-    """从事件流归约出 {任务: 当前状态}、{任务: [证据]}、{任务: 最后更新时间}。"""
+def reduce_states(events: list[dict]) -> tuple[dict[str, str], dict[str, list[str]], dict[str, str]]:
+    """从事件流归约出 {任务: 当前状态}、{任务: [备注]}、{任务: 最后更新时间}。
+
+    备注为自由文本；兼容旧事件里的 evidence 数组（折成路径串并入备注显示）。
+    """
     states: dict[str, str] = {}
-    evidence: dict[str, list[dict]] = {}
+    notes: dict[str, list[str]] = {}
     updated: dict[str, str] = {}
     for entry in events:
         task = entry.get("task")
@@ -280,12 +272,17 @@ def reduce_states(events: list[dict]) -> tuple[dict[str, str], dict[str, list[di
         to_state = entry.get("to")
         if to_state in ALL_STATES:
             states[task] = to_state
-        for item in entry.get("evidence") or []:
-            if isinstance(item, dict) and item.get("path"):
-                evidence.setdefault(task, []).append(item)
+        legacy = "；".join(
+            str(item.get("path"))
+            for item in entry.get("evidence") or []
+            if isinstance(item, dict) and item.get("path")
+        )
+        text = "  ".join(x for x in ((entry.get("note") or "").strip(), legacy) if x)
+        if text:
+            notes.setdefault(task, []).append(text)
         if entry.get("ts"):
             updated[task] = entry["ts"]
-    return states, evidence, updated
+    return states, notes, updated
 
 
 def append_event(root: Path, **fields) -> dict:
@@ -297,82 +294,51 @@ def append_event(root: Path, **fields) -> dict:
         "from": fields.get("from"),
         "to": fields.get("to"),
         "agent": fields.get("agent"),
-        "evidence": fields.get("evidence") or [],
         "note": fields.get("note") or "",
     }
     append_jsonl(events_path(root), entry)
     return entry
 
 
-def parse_evidence_args(raw_list: list[str] | None) -> list[dict]:
-    """把 CLI 的 `L2:path` 列表解析为 [{'level','path'}]；缺等级前缀按 L0。"""
-    out: list[dict] = []
-    for raw in raw_list or []:
-        match = EVIDENCE_RE.match(raw.strip())
-        if match:
-            out.append({"level": match.group(1), "path": match.group(2).strip()})
-        elif raw.strip():
-            out.append({"level": "L0", "path": raw.strip()})
-    return out
-
-
-def check_evidence(task: str, info: dict | None, evidence: list[dict], repo: Path) -> list[str]:
-    """校验证据：非空、等级达标、实体真实存在。返回问题列表（空=通过）。"""
-    problems: list[str] = []
-    if not evidence:
-        problems.append("没有任何证据（done 必须挂 evidence，如 L2:.../review.json）")
-        return problems
-    required = (info or {}).get("level", "L0")
-    got = {item.get("level", "L0") for item in evidence}
-    if required not in got:
-        problems.append(f"计划要求 {required} 证据，实际只有 {'/'.join(sorted(got)) or '无'}")
-    for item in evidence:
-        entity = repo / item["path"]
-        if not entity.exists():
-            problems.append(f"证据实体不存在：{item['path']}（{item.get('level')}）")
-    return problems
+def linear_allowed(current: str, target: str) -> bool:
+    """线性命令是否允许：终态不可离开；blocked 可任意前进；否则目标不得倒退。"""
+    if current in TERMINAL:
+        return False
+    if current == "blocked":
+        return True
+    return RANK[target] >= RANK.get(current, 0)
 
 
 # ---------------------------------------------------------------- 写事件命令
 
 
+def note_text(args) -> str:
+    """备注文本：--note 与兼容参数 --evidence（折入）合并，均为自由文本、不校验。"""
+    legacy = getattr(args, "evidence", None) or []
+    return "  ".join(x for x in ((getattr(args, "note", "") or "").strip(),
+                                 "；".join(legacy)) if x)
+
+
 def cmd_transition(args, kind: str) -> int:
-    """claim/start/submit/done/unblock 的通用转移执行。"""
+    """claim/start/submit/done 的通用转移执行（允许前跳，无验收门）。"""
     root: Path = args.root
-    repo: Path = args.repo
-    states, evidence, _ = reduce_states(load_events(root))
+    states, _, _ = reduce_states(load_events(root))
     current = states.get(args.task, "pending")
-    allowed = TRANSITIONS[kind]
-    if current not in allowed:
-        target = next(iter(allowed.values())) if len(allowed) == 1 else "?"
+    target = LINEAR_TARGETS[kind]
+    if not linear_allowed(current, target):
         print(
-            f"✗ {args.task} 当前为 {current}，{kind} 需要前驱 "
-            f"{'/'.join(sorted(allowed))}（目标 {target}）",
+            f"✗ {args.task} 当前为 {current}，不能 {kind} → {target}"
+            "（终态不可离开，如需反悔用 revoke；线性转移不可倒退）",
             file=sys.stderr,
         )
         return 2
-
-    new_evidence = parse_evidence_args(getattr(args, "evidence", None))
-    target = allowed[current]
-
-    if kind == "done":
-        merged = evidence.get(args.task, []) + new_evidence
-        info = parse_plan(args.plan).get(args.task) if args.plan else None
-        problems = check_evidence(args.task, info, merged, repo)
-        if problems:
-            print(f"✗ {args.task} 验收门未通过：", file=sys.stderr)
-            for item in problems:
-                print(f"  - {item}", file=sys.stderr)
-            print("（证据未写入；补齐后可重试 done）", file=sys.stderr)
-            return 1
 
     entry = append_event(
         root,
         task=args.task,
         **{"from": current, "to": target},
         agent=args.agent,
-        evidence=new_evidence,
-        note=getattr(args, "note", "") or getattr(args, "reason", "") or "",
+        note=note_text(args),
     )
     print(f"✓ {args.task}: {current} → {target}  #{entry['seq']}  agent={args.agent}")
     return 0
@@ -408,28 +374,44 @@ def cmd_fail(args) -> int:
     return 0
 
 
+def cmd_revoke(args) -> int:
+    """revoke：终态（done/failed）→ active，追加补偿事件（历史不删，供纠错/反证）。"""
+    states, _, _ = reduce_states(load_events(args.root))
+    current = states.get(args.task, "pending")
+    if current not in TERMINAL:
+        print(f"✗ {args.task} 当前为 {current}，只有 done/failed 才能 revoke", file=sys.stderr)
+        return 2
+    entry = append_event(
+        args.root, task=args.task, **{"from": current, "to": "active"},
+        agent=args.agent, note=args.reason,
+    )
+    print(f"✓ {args.task}: {current} → active（撤销）  #{entry['seq']}  原因：{args.reason}")
+    return 0
+
+
 def cmd_seed(args) -> int:
-    """seed：从基线 JSON 一次性灌入（审计收口用，绕过验收门校验但会告警）。"""
+    """seed：从基线 JSON 一次性灌入（审计收口用）。"""
     payload = json.loads(Path(args.file).read_text(encoding="utf-8"))
     tasks = payload.get("tasks", payload)
-    repo: Path = args.repo
-    plan = parse_plan(args.plan) if args.plan else {}
     count = 0
     for task, spec in tasks.items():
         state = spec.get("state", "pending")
         if state not in ALL_STATES:
             print(f"✗ {task} 非法状态 {state}", file=sys.stderr)
             return 2
-        evidence = spec.get("evidence") or []
-        problems = check_evidence(task, plan.get(task), evidence, repo) if state == "done" else []
+        note = spec.get("note") or "baseline"
+        legacy = "；".join(
+            str(item.get("path"))
+            for item in spec.get("evidence") or []
+            if isinstance(item, dict) and item.get("path")
+        )
+        if legacy:
+            note = f"{note}  {legacy}"
         append_event(
             args.root, task=task, **{"from": None, "to": state},
-            agent=spec.get("agent", "audit"),
-            evidence=evidence, note=spec.get("note", "baseline"),
+            agent=spec.get("agent", "audit"), note=note,
         )
         count += 1
-        if problems:
-            print(f"⚠ {task} 基线标 done 但证据存疑：{'；'.join(problems)}")
     print(f"✓ 已灌入 {count} 条基线事件 → {events_path(args.root)}")
     return 0
 
@@ -438,18 +420,18 @@ def cmd_seed(args) -> int:
 
 
 def cmd_status(args) -> int:
-    """status：打印单任务状态与证据。"""
-    states, evidence, updated = reduce_states(load_events(args.root))
+    """status：打印单任务状态与备注。"""
+    states, notes, updated = reduce_states(load_events(args.root))
     state = states.get(args.task, "pending")
     print(f"{args.task}  状态={state}  最后更新={updated.get(args.task, '-')}")
-    for item in evidence.get(args.task, []):
-        print(f"  证据 {item.get('level')}  {item.get('path')}")
+    for item in notes.get(args.task, []):
+        print(f"  备注 {item}")
     return 0
 
 
 def cmd_list(args) -> int:
     """list：列出任务状态（可按状态/批次过滤）。"""
-    states, evidence, updated = reduce_states(load_events(args.root))
+    states, notes, updated = reduce_states(load_events(args.root))
     plan = parse_plan(args.plan) if args.plan else {}
     ids = sorted(
         set(plan) | set(states),
@@ -462,18 +444,20 @@ def cmd_list(args) -> int:
             continue
         if args.batch and not task.startswith(f"{args.batch}-"):
             continue
-        rows.append((task, state, len(evidence.get(task, [])), updated.get(task, "-")))
+        last_note = (notes.get(task) or [""])[-1]
+        rows.append((task, state, last_note, updated.get(task, "-")))
     if args.json:
         print(json.dumps(
-            [{"task": t, "state": s, "evidence": n, "updated": u} for t, s, n, u in rows],
+            [{"task": t, "state": s, "note": n, "updated": u} for t, s, n, u in rows],
             ensure_ascii=False, indent=2,
         ))
         return 0
     if not rows:
         print("（无匹配任务）")
         return 0
-    for task, state, n, updated in rows:
-        print(f"{MARKERS.get(state, '?')} {task:<7} {state:<8} evidence={n}  updated={updated}")
+    for task, state, note, updated in rows:
+        tag = f"  {note}" if note else ""
+        print(f"{MARKERS.get(state, '?')} {task:<7} {state:<8} {updated}{tag}")
     return 0
 
 
@@ -488,18 +472,17 @@ def cmd_log(args) -> int:
         print("（事件流为空）")
         return 0
     for e in events:
-        ev = ",".join(f"{i.get('level')}:{i.get('path')}" for i in e.get("evidence") or [])
         print(
             f"#{e.get('seq'):<4} {e.get('ts', '-'):<20} {e.get('task', '-'):<7} "
             f"{str(e.get('from')):<8}→{str(e.get('to')):<8} {e.get('agent') or '-':<10} "
-            f"{e.get('note') or ''}{('  ' + ev) if ev else ''}".rstrip()
+            f"{e.get('note') or ''}".rstrip()
         )
     return 0
 
 
 def cmd_board(args) -> int:
     """board：生成看板（按批次分组，状态来自事件日志）。"""
-    states, evidence, updated = reduce_states(load_events(args.root))
+    states, notes, updated = reduce_states(load_events(args.root))
     plan = parse_plan(args.plan)
     ids = sorted(set(plan) | set(states), key=lambda t: (t.split("-")[0], int(t.split("-")[1])))
     batches: dict[str, list[str]] = {}
@@ -511,7 +494,6 @@ def cmd_board(args) -> int:
     out.append("")
     out.append(f"生成时间：{now_iso()}　计划：{args.plan}")
     counts = {state: 0 for state in ALL_STATES}
-    counts["pending"] += 0
     for task in ids:
         counts[states.get(task, "pending")] = counts.get(states.get(task, "pending"), 0) + 1
     out.append(
@@ -521,20 +503,18 @@ def cmd_board(args) -> int:
     for batch in sorted(batches):
         out.append(f"## {batch}")
         out.append("")
-        out.append("| 任务 | 状态 | 需验收 | 证据 | 更新 | 摘要 |")
-        out.append("|---|---|---|---|---|---|")
+        out.append("| 任务 | 状态 | 备注 | 更新 | 摘要 |")
+        out.append("|---|---|---|---|---|")
         for task in batches[batch]:
             info = plan.get(task, {})
             state = states.get(task, "pending")
-            ev = evidence.get(task, [])
-            ev_txt = "；".join(f"{i.get('level')}:{i.get('path')}" for i in ev) or "—"
+            note = "；".join(notes.get(task, [])).replace("|", "/") or "—"
             title = (info.get("title") or "").replace("|", "/")
             if len(title) > 40:
                 title = title[:39] + "…"
             mark = MARKERS.get(state, "?")
             out.append(
-                f"| {task} | {mark} {state} | {info.get('level', '-')} | {ev_txt} | "
-                f"{updated.get(task, '—')} | {title} |"
+                f"| {task} | {mark} {state} | {note} | {updated.get(task, '—')} | {title} |"
             )
         out.append("")
     text = "\n".join(out)
@@ -622,7 +602,7 @@ def spec_hits_path(spec: str, path: str) -> bool:
 
 def cmd_reconcile(args) -> int:
     """reconcile：plan（勾选）× 事件日志 × git 工作树 三路对账。"""
-    states, evidence, _ = reduce_states(load_events(args.root))
+    states, _, _ = reduce_states(load_events(args.root))
     plan = parse_plan(args.plan)
     changed = git_changed_files(args.repo) if not args.no_git else []
     has_checks = any(info.get("checked") for info in plan.values())
@@ -630,7 +610,6 @@ def cmd_reconcile(args) -> int:
     diffs = {
         "checked_no_done": [],   # 计划打了勾但不是 done
         "state_no_check": [],    # 有事件（active/verify/done）但计划没打勾
-        "done_bad_evidence": [], # done 但证据缺失/等级不足/实体不存在
         "changed_unclaimed": [], # 计划中仍是 pending/claimed 却已改动其文件
         "orphan_changes": [],    # 工作树改动不属于任何任务
         "not_started": [],       # 计划内、零事件（仅计数）
@@ -644,10 +623,6 @@ def cmd_reconcile(args) -> int:
             diffs["checked_no_done"].append((task, state))
         if info and not info.get("checked") and state in {"active", "verify", "done"} and has_checks:
             diffs["state_no_check"].append((task, state))
-        if state == "done":
-            problems = check_evidence(task, info, evidence.get(task, []), args.repo)
-            if problems:
-                diffs["done_bad_evidence"].append((task, "；".join(problems)))
         if task not in states:
             diffs["not_started"].append(task)
 
@@ -682,8 +657,6 @@ def cmd_reconcile(args) -> int:
             lambda x: f"`{x[0]}` 实际 {x[1]}")
     section("有事件但计划未打勾（仅过渡期有意义）", diffs["state_no_check"],
             lambda x: f"`{x[0]}` 实际 {x[1]}")
-    section("done 但证据不合规", diffs["done_bad_evidence"],
-            lambda x: f"`{x[0]}`：{x[1]}")
     section("未登记却已改动其文件（pending/claimed）", diffs["changed_unclaimed"],
             lambda x: f"`{x[0]}` 命中的改动：{x[1]}")
     section("工作树改动未归属任何任务", diffs["orphan_changes"], lambda x: f"`{x}`")
@@ -698,10 +671,7 @@ def cmd_reconcile(args) -> int:
     else:
         print(text)
 
-    actionable = (
-        diffs["checked_no_done"] or diffs["done_bad_evidence"]
-        or diffs["changed_unclaimed"]
-    )
+    actionable = diffs["checked_no_done"] or diffs["changed_unclaimed"]
     return 1 if actionable else 0
 
 
@@ -709,7 +679,7 @@ def cmd_reconcile(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="任务状态跟踪与验收门：事件日志为唯一真源，视图全部生成。")
+    parser = argparse.ArgumentParser(description="任务状态跟踪：事件日志为唯一真源，验收是灯不是门，视图全部生成。")
     parser.add_argument("--root", type=Path, default=None, help="协调目录（默认 <git 根>/.agentic）")
     parser.add_argument("--repo", type=Path, default=None, help="仓库根（默认从 --root 向上找 .git）")
     parser.add_argument("--plan", type=Path, default=None, help="计划文档路径")
@@ -721,22 +691,25 @@ def build_parser() -> argparse.ArgumentParser:
     def add_task(p):
         p.add_argument("task", help="任务 ID，如 P1-1")
 
-    p = sub.add_parser("claim", help="pending → claimed")
-    add_task(p); add_agent(p)
+    def add_note(p):
+        p.add_argument("--note", default="", help="可选自由备注（想留痕就写，如截图/日志路径）")
+        p.add_argument("--evidence", action="append",
+                       help="(兼容旧用法) 证据路径，折入备注，不做任何校验")
+
+    p = sub.add_parser("claim", help="→ claimed（认领）")
+    add_task(p); add_agent(p); add_note(p)
     p.set_defaults(func=lambda a: cmd_transition(a, "claim"))
 
-    p = sub.add_parser("start", help="claimed → active")
-    add_task(p); add_agent(p)
+    p = sub.add_parser("start", help="→ active（开工；可从 pending/claimed 前跳）")
+    add_task(p); add_agent(p); add_note(p)
     p.set_defaults(func=lambda a: cmd_transition(a, "start"))
 
-    p = sub.add_parser("submit", help="active → verify（可附证据）")
-    add_task(p); add_agent(p)
-    p.add_argument("--evidence", action="append", help="证据 LEVEL:PATH，可重复")
+    p = sub.add_parser("submit", help="→ verify（提交待查；可选）")
+    add_task(p); add_agent(p); add_note(p)
     p.set_defaults(func=lambda a: cmd_transition(a, "submit"))
 
-    p = sub.add_parser("done", help="verify → done（过验收门：证据等级+实体存在）")
-    add_task(p); add_agent(p)
-    p.add_argument("--evidence", action="append", help="证据 LEVEL:PATH，可重复")
+    p = sub.add_parser("done", help="→ done（无前置条件，不强制证据）")
+    add_task(p); add_agent(p); add_note(p)
     p.set_defaults(func=lambda a: cmd_transition(a, "done"))
 
     p = sub.add_parser("block", help="任意非终态 → blocked")
@@ -750,14 +723,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_fail)
 
     p = sub.add_parser("unblock", help="blocked → active")
-    add_task(p); add_agent(p)
+    add_task(p); add_agent(p); add_note(p)
     p.set_defaults(func=lambda a: cmd_transition(a, "unblock"))
+
+    p = sub.add_parser("revoke", help="done/failed → active（追加补偿事件，供纠错/反证）")
+    add_task(p); add_agent(p)
+    p.add_argument("--reason", required=True, help="撤销原因（如证据有误/测试坏了）")
+    p.set_defaults(func=cmd_revoke)
 
     p = sub.add_parser("seed", help="从基线 JSON 灌入事件（审计收口）")
     p.add_argument("file", help="基线 JSON 路径")
     p.set_defaults(func=cmd_seed)
 
-    p = sub.add_parser("status", help="查看单任务状态与证据")
+    p = sub.add_parser("status", help="查看单任务状态与备注")
     add_task(p)
     p.set_defaults(func=cmd_status)
 
@@ -780,7 +758,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help="写入文件；缺省打印到 stdout")
     p.set_defaults(func=cmd_gantt)
 
-    p = sub.add_parser("reconcile", help="plan × 事件日志 × git 三路对账")
+    p = sub.add_parser("reconcile", help="plan × 事件日志 × git 三路对账（软报告）")
     p.add_argument("--out", help="写入文件；缺省打印到 stdout")
     p.add_argument("--no-git", action="store_true", help="跳过 git 工作树对比")
     p.set_defaults(func=cmd_reconcile)
