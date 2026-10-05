@@ -329,6 +329,8 @@ def append_event(root: Path, **fields) -> dict:
             "agent": fields.get("agent"),
             "note": fields.get("note") or "",
         }
+        if fields.get("claim"):
+            entry["claim"] = True
         append_jsonl(events_path(root), entry)
     return entry
 
@@ -407,7 +409,7 @@ def current_holders(events: list[dict]) -> dict[str, str]:
             continue
         if to_state in TERMINAL or to_state == "pending":
             holders.pop(task, None)
-        elif to_state in ("claimed", "active") and agent:
+        elif (to_state in ("claimed", "active") or entry.get("claim")) and agent:
             holders[task] = agent
     return holders
 
@@ -466,7 +468,10 @@ def cmd_transition(args, kind: str) -> int:
     states, _, _ = reduce_states(events)
     current = states.get(args.task, "pending")
     target = LINEAR_TARGETS[kind]
-    if not linear_allowed(current, target):
+    takeover = kind == "claim" and current not in TERMINAL and RANK.get(current, 0) > RANK["claimed"]
+    if takeover:
+        target = current  # 接管已推进到 active/verify 的任务：只换持有者，不倒退状态
+    elif not linear_allowed(current, target):
         print(
             f"✗ {args.task} 当前为 {current}，不能 {kind} → {target}"
             "（终态不可离开，如需反悔用 revoke；线性转移不可倒退）",
@@ -480,8 +485,9 @@ def cmd_transition(args, kind: str) -> int:
         **{"from": current, "to": target},
         agent=args.agent,
         note=note_text(args),
+        claim=True if kind == "claim" else None,
     )
-    print(f"✓ {args.task}: {current} → {target}  #{entry['seq']}  agent={args.agent}")
+    print(f"✓ {args.task}: {current} → {target}{'（接管）' if takeover else ''}  #{entry['seq']}  agent={args.agent}")
     if kind in ("claim", "start"):
         warnings = claim_warnings(args, args.task, states, current_holders(events))
         if warnings:
