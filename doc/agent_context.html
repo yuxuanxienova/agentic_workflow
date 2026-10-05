@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 的记忆与知识管理 · 新窗口怎么知道"我们的规矩"</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111c2e; --panel2:#16233a; --line:#24354f;
+    --text:#dbe7f5; --muted:#8fa6c0; --accent:#6bccff; --accent2:#6bffb8;
+    --warn:#ffb86b; --danger:#ff7a85; --purple:#b39dff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       line-height:1.75;font-size:15.5px;-webkit-font-smoothing:antialiased}
+  .wrap{display:grid;grid-template-columns:262px minmax(0,1fr);max-width:1420px;margin:0 auto}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+      padding:28px 18px;border-right:1px solid var(--line);background:#0a111d}
+  nav .brand{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:.4px;margin-bottom:4px}
+  nav .brand small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;letter-spacing:0}
+  nav ol{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
+  nav ol li{counter-increment:s;margin:2px 0}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;display:block;padding:5px 9px;border-radius:7px;transition:.15s}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  nav a::before{content:counter(s) ". ";color:#4d6b8a;font-family:var(--mono);font-size:11px}
+  main{padding:44px 52px 120px;min-width:0}
+  h1{font-size:31px;line-height:1.32;margin:0 0 8px;letter-spacing:-.4px}
+  .lede{color:var(--muted);font-size:16px;margin:0 0 8px}
+  .meta{color:#5d7794;font-size:12.5px;font-family:var(--mono);margin-bottom:34px}
+  h2{font-size:23px;margin:60px 0 14px;padding-top:14px;border-top:1px solid var(--line);letter-spacing:-.2px}
+  h2 .k{color:var(--accent);font-family:var(--mono);font-size:15px;margin-right:10px;padding:2px 8px;
+        border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+  h3{font-size:17px;margin:32px 0 10px;color:#eaf3ff}
+  h4{font-size:14.5px;margin:22px 0 8px;color:var(--accent);letter-spacing:.2px}
+  p{margin:10px 0}
+  a{color:var(--accent)}
+  code{font-family:var(--mono);font-size:12.8px;background:#0a1526;border:1px solid var(--line);
+       border-radius:5px;padding:1.5px 6px;color:#a8dcff}
+  pre{background:#0a1526;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:#c7ddf2;font-size:12.8px;line-height:1.65}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  strong{color:#f0f7ff}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .card.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .box{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .box h5{margin:0 0 6px;font-size:13px;color:var(--accent2);font-family:var(--mono)}
+  .box p{margin:0;font-size:13px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.3px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cfe4fb;font-weight:600;font-size:12.8px;white-space:nowrap}
+  tr:nth-child(even) td{background:#0e1828}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1.5px 7px;border-radius:5px;
+       border:1px solid var(--line);background:#0a1526;color:var(--muted);white-space:nowrap}
+  .tag.auto{color:var(--accent2);border-color:#2a5a45}
+  .tag.lazy{color:var(--warn);border-color:#5a4526}
+  .tag.manual{color:var(--purple);border-color:#3f3566}
+  .tag.no{color:var(--danger);border-color:#5a2a31}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:3px solid var(--accent);
+             background:#0e1a2b;border-radius:0 10px 10px 0;color:#c3d8ee}
+  blockquote.warn{border-left-color:var(--warn);background:#1d1a12}
+  blockquote.danger{border-left-color:var(--danger);background:#1f1416}
+  .fig{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .fig svg{display:block;width:100%;height:auto}
+  .fig figcaption{color:var(--muted);font-size:12.5px;text-align:center;margin-top:10px}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:18px 0}
+  .kpi div{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
+  .kpi b{display:block;font-size:22px;color:var(--accent);font-family:var(--mono);line-height:1.3}
+  .kpi span{font-size:12px;color:var(--muted)}
+  hr{border:none;border-top:1px solid var(--line);margin:40px 0}
+  .foot{color:#5d7794;font-size:12.5px;text-align:center;margin-top:60px}
+  .src{font-size:12.6px;color:var(--muted)}
+  .src li{margin:7px 0}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+    nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    main{padding:28px 20px 80px}
+    .card.grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">Agent 记忆与知识管理<small>新窗口怎么知道"我们的规矩" · 2026-10-05</small></div>
+  <ol>
+    <li><a href="#s0">问题：新开窗口说"去做 P1-3"</a></li>
+    <li><a href="#s1">主轴：上下文在什么时机进入</a></li>
+    <li><a href="#s2">谁读哪个文件（对照矩阵）</a></li>
+    <li><a href="#s3">四类"读到程度"分类学</a></li>
+    <li><a href="#s4">Codex 的机制</a></li>
+    <li><a href="#s5">Claude Code 的机制</a></li>
+    <li><a href="#s6">Trae 的机制</a></li>
+    <li><a href="#s7">本项目的现状实拍</a></li>
+    <li><a href="#s8">场景推演：Codex + P1-3</a></li>
+    <li><a href="#s9">处方：单一真源 + 指针</a></li>
+    <li><a href="#s10">来源</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<h1>Agent 的记忆与知识管理</h1>
+<p class="lede">我们已经有了一套很棒的框架，但它是不是在新窗口里"自动生效"？一份文件到底是<b>每次必读</b>、<b>读一次就够</b>、还是<b>碰运气才被读到</b>——这篇把它彻底讲清。</p>
+<p class="meta">2026-10-05 · 覆盖 Codex / Claude Code / Trae（附 Cursor / Copilot / Gemini 对照）· 实例：EndlessSpace</p>
+
+<!-- ============ 0 ============ -->
+<h2 id="s0"><span class="k">0</span>问题：新开一个窗口说"去做 P1-3"</h2>
+
+<p>先把你的三个疑问摆到桌面上：</p>
+
+<blockquote>
+① 新开一个 Codex 窗口，我只说一句「你去解决任务 P1-3」，它<b>能不能知道</b>我们定过的这套规矩（单主干、验收铁律、文件所有权矩阵、<code>task_state.py</code>……）？<br>
+② 项目里躺着 <code>AGENTS.md</code>、<code>CLAUDE.md</code>、<code>README.md</code> —— 到底<b>哪些是每次必读</b>？哪些是<b>读一次就够</b>？哪些是<b>偶尔才被读到</b>？<br>
+③ 这些文件里，哪些是 <b>Codex 读但 Claude 不读</b>？<b>Trae 又读哪些</b>？
+</blockquote>
+
+<p>答案的关键，是先破除一个直觉：<strong>"文件在仓库里" ≠ "agent 会看到它"</strong>。一个 agent 每次开工时，脑子里（上下文窗口）装着什么，是由<b>三个不同的机制</b>分别灌进去的，而这三个机制的"读取时机"和"可靠性"完全不同。下一节先建立这根主轴。</p>
+
+<!-- ============ 1 ============ -->
+<h2 id="s1"><span class="k">1</span>主轴：上下文在什么时机进入</h2>
+
+<p>不看厂商，先看机制。一个 agent 的上下文窗口，内容来自五层，按"进入时机"可以归成三类：</p>
+
+<div class="fig">
+  <svg viewBox="0 0 960 470" role="img" aria-label="上下文窗口的五个来源与进入时机">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 z" fill="#6bccff"/>
+      </marker>
+    </defs>
+    <!-- column headers -->
+    <text x="30" y="30" fill="#8fa6c0" font-size="13" font-family="sans-serif">来源</text>
+    <text x="470" y="30" fill="#8fa6c0" font-size="13" font-family="sans-serif">何时进入上下文</text>
+    <text x="760" y="30" fill="#8fa6c0" font-size="13" font-family="sans-serif">可靠性</text>
+    <line x1="20" y1="42" x2="940" y2="42" stroke="#24354f"/>
+
+    <!-- row1 -->
+    <rect x="24" y="58" width="380" height="58" rx="9" fill="#16233a" stroke="#2a5a45"/>
+    <text x="40" y="82" fill="#dbe7f5" font-size="13.5" font-family="sans-serif">系统提示 + 工具定义（厂商内置）</text>
+    <text x="40" y="102" fill="#8fa6c0" font-size="11.5" font-family="monospace">你改不了核心，但可追加</text>
+    <line x1="404" y1="87" x2="460" y2="87" stroke="#6bccff" marker-end="url(#ar)"/>
+    <text x="470" y="82" fill="#6bffb8" font-size="13" font-family="sans-serif">会话启动 · 必进</text>
+    <text x="470" y="102" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">100% 恒定</text>
+    <text x="760" y="82" fill="#6bffb8" font-size="13" font-family="monospace">A 类</text>
+
+    <!-- row2 -->
+    <rect x="24" y="126" width="380" height="58" rx="9" fill="#16233a" stroke="#2a5a45"/>
+    <text x="40" y="150" fill="#dbe7f5" font-size="13.5" font-family="sans-serif">指令文件（AGENTS / CLAUDE / rules）</text>
+    <text x="40" y="170" fill="#8fa6c0" font-size="11.5" font-family="monospace">我们写的"规矩"主要放这里</text>
+    <line x1="404" y1="155" x2="460" y2="155" stroke="#6bccff" marker-end="url(#ar)"/>
+    <text x="470" y="150" fill="#6bffb8" font-size="13" font-family="sans-serif">会话启动 · 自动注入</text>
+    <text x="470" y="170" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">高（有大小上限/截断）</text>
+    <text x="760" y="150" fill="#6bffb8" font-size="13" font-family="monospace">A 类</text>
+
+    <!-- row3 -->
+    <rect x="24" y="194" width="380" height="58" rx="9" fill="#16233a" stroke="#5a4526"/>
+    <text x="40" y="218" fill="#dbe7f5" font-size="13.5" font-family="sans-serif">按需规则 / 技能元数据 / 子目录指令</text>
+    <text x="40" y="238" fill="#8fa6c0" font-size="11.5" font-family="monospace">匹配文件、或调用某技能时才载入</text>
+    <line x1="404" y1="223" x2="460" y2="223" stroke="#6bccff" marker-end="url(#ar)"/>
+    <text x="470" y="218" fill="#ffb86b" font-size="13" font-family="sans-serif">会话内 · 触发式</text>
+    <text x="470" y="238" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">中（触发条件不满足就不进）</text>
+    <text x="760" y="218" fill="#ffb86b" font-size="13" font-family="monospace">B 类</text>
+
+    <!-- row4 -->
+    <rect x="24" y="262" width="380" height="58" rx="9" fill="#16233a" stroke="#3f3566"/>
+    <text x="40" y="286" fill="#dbe7f5" font-size="13.5" font-family="sans-serif">普通文档（README / Doc / 计划文档）</text>
+    <text x="40" y="306" fill="#8fa6c0" font-size="11.5" font-family="monospace">agent 自己决定去读，或被 # 引用</text>
+    <line x1="404" y1="291" x2="460" y2="291" stroke="#6bccff" marker-end="url(#ar)"/>
+    <text x="470" y="286" fill="#b39dff" font-size="13" font-family="sans-serif">完全自主决定</text>
+    <text x="470" y="306" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">低（取决于它搜不搜）</text>
+    <text x="760" y="286" fill="#b39dff" font-size="13" font-family="monospace">C 类</text>
+
+    <!-- row5 -->
+    <rect x="24" y="330" width="380" height="58" rx="9" fill="#16233a" stroke="#24354f"/>
+    <text x="40" y="354" fill="#dbe7f5" font-size="13.5" font-family="sans-serif">自动记忆（agent 自己写的笔记）</text>
+    <text x="40" y="374" fill="#8fa6c0" font-size="11.5" font-family="monospace">后台总结上一段会话 → 下次读</text>
+    <line x1="404" y1="359" x2="460" y2="359" stroke="#6bccff" marker-end="url(#ar)"/>
+    <text x="470" y="354" fill="#8fa6c0" font-size="13" font-family="sans-serif">跨会话 · 异步生成</text>
+    <text x="470" y="374" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">中低（内容不由你直接控制）</text>
+    <text x="760" y="354" fill="#8fa6c0" font-size="13" font-family="monospace">D 类</text>
+
+    <!-- bottom note -->
+    <rect x="24" y="404" width="912" height="46" rx="9" fill="#0e1a2b" stroke="#24354f"/>
+    <text x="40" y="424" fill="#c3d8ee" font-size="12.8" font-family="sans-serif">会话历史与工具调用结果会不断膨胀 —— 它们是唯一会"挤掉"前面内容的因素，到阈值时触发压缩（compaction），</text>
+    <text x="40" y="442" fill="#c3d8ee" font-size="12.8" font-family="sans-serif">压缩后 A 类指令通常会被重新注入，而 B/C 类按需内容会被丢弃、等下次触发才回来。</text>
+  </svg>
+  <figcaption>图 1 · 上下文的五个来源与它们的进入时机。"我们写的规矩"应尽量落在 A 类（启动自动注入），而不是靠 C 类碰运气。</figcaption>
+</div>
+
+<p>记住这张图的分类：<span class="tag auto">A 启动自动</span> <span class="tag lazy">B 触发按需</span> <span class="tag manual">C 自主/引用</span> <span class="tag no">D 记忆</span>。下面所有厂商机制，都是在回答"某类文件被归到了哪一档"。</p>
+
+<!-- ============ 2 ============ -->
+<h2 id="s2"><span class="k">2</span>谁读哪个文件（对照矩阵）</h2>
+
+<p>这是你最想要的那张表。按"文件 → 谁自动读"来排，<strong>而不是</strong>按"文件在不在仓库里"。</p>
+
+<table>
+  <thead>
+    <tr><th>文件</th><th>Codex</th><th>Claude Code</th><th>Trae</th><th>Cursor / Copilot / Gemini</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>AGENTS.md</code><br><span class="src">开放标准（Linux Foundation）</span></td>
+      <td><span class="tag auto">原生 · 启动拼接</span></td>
+      <td><span class="tag lazy">可读 · 通常需 <code>@AGENTS.md</code> 导入</span></td>
+      <td><span class="tag manual">不自动；当普通文件可被 # 引用</span></td>
+      <td><span class="tag auto">Cursor 原生</span> / <span class="tag auto">Copilot 原生</span> / <span class="tag manual">Gemini 用 GEMINI.md</span></td>
+    </tr>
+    <tr>
+      <td><code>CLAUDE.md</code><br><span class="src">Claude Code 私有</span></td>
+      <td><span class="tag lazy">默认不读；可配 fallback 文件名</span></td>
+      <td><span class="tag auto">原生 · 四层级自动加载</span></td>
+      <td><span class="tag manual">不自动</span></td>
+      <td><span class="tag manual">不读</span></td>
+    </tr>
+    <tr>
+      <td><code>.trae/rules/*.md</code><br><span class="src">含 <code>alwaysApply</code> / <code>globs</code> / <code>description</code></span></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag auto">原生 · 按生效方式</span></td>
+      <td><span class="tag no">不读</span></td>
+    </tr>
+    <tr>
+      <td><code>.cursor/rules/*.mdc</code><br><span class="src">旧版 <code>.cursorrules</code></span></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag auto">Cursor 原生</span></td>
+    </tr>
+    <tr>
+      <td><code>.github/copilot-instructions.md</code></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag no">不读</span></td>
+      <td><span class="tag auto">Copilot 原生</span></td>
+    </tr>
+    <tr>
+      <td><code>README.md</code></td>
+      <td><span class="tag manual">不自动 · 它自己决定读</span></td>
+      <td><span class="tag manual">不自动 · 它自己决定读</span></td>
+      <td><span class="tag manual">不自动 · 可 #File 引用</span></td>
+      <td><span class="tag manual">不自动</span></td>
+    </tr>
+    <tr>
+      <td><code>Doc/…</code>、计划文档、HANDOFF</td>
+      <td><span class="tag manual">不自动 · 靠它搜索/你指引</span></td>
+      <td><span class="tag manual">不自动 · 同上</span></td>
+      <td><span class="tag manual">不自动 · 可 #File/#Folder</span></td>
+      <td><span class="tag manual">不自动</span></td>
+    </tr>
+    <tr>
+      <td>自动记忆<br><span class="src"><code>~/.codex/memories</code> · <code>~/.claude/…/memory</code></span></td>
+      <td><span class="tag lazy">有（后台生成）</span></td>
+      <td><span class="tag lazy">有（auto memory）</span></td>
+      <td><span class="tag no">无同等机制</span></td>
+      <td><span class="tag lazy">部分工具支持</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote class="warn"><strong>最反直觉的一条：</strong><code>README.md</code> 对任何一个 agent 都<b>不是</b>指令文件。它既不会被自动注入，也不是"必读"。它是写给人看的说明；agent 只有在<b>自己决定</b>去读、或你显式引用时才会看到它。把规矩写进 README 指望 agent 遵守，是最常见的误解。</blockquote>
+
+<div class="fig">
+  <svg viewBox="0 0 960 300" role="img" aria-label="各工具自动加载的入口文件">
+    <text x="20" y="26" fill="#8fa6c0" font-size="13" font-family="sans-serif">各工具"启动时自动注入"的入口文件（不需要你提醒）</text>
+    <line x1="20" y1="38" x2="940" y2="38" stroke="#24354f"/>
+
+    <!-- Codex -->
+    <rect x="20" y="54" width="220" height="212" rx="10" fill="#111c2e" stroke="#2a5a45"/>
+    <text x="38" y="80" fill="#6bffb8" font-size="14" font-family="sans-serif" font-weight="bold">Codex</text>
+    <text x="38" y="104" fill="#dbe7f5" font-size="12.5" font-family="monospace">~/.codex/AGENTS.md</text>
+    <text x="38" y="128" fill="#dbe7f5" font-size="12.5" font-family="monospace">&lt;repo&gt;/AGENTS.md</text>
+    <text x="38" y="152" fill="#dbe7f5" font-size="12.5" font-family="monospace">&lt;cwd 路径上每个&gt;/</text>
+    <text x="46" y="170" fill="#dbe7f5" font-size="12.5" font-family="monospace">AGENTS.md</text>
+    <text x="38" y="200" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">拼接 · 越靠近 cwd 越靠后</text>
+    <text x="38" y="220" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">默认上限 32 KiB，超出静默截断</text>
+    <text x="38" y="248" fill="#ffb86b" font-size="11.5" font-family="sans-serif">CLAUDE.md 默认不读</text>
+
+    <!-- Claude -->
+    <rect x="252" y="54" width="220" height="212" rx="10" fill="#111c2e" stroke="#2a5a45"/>
+    <text x="270" y="80" fill="#6bffb8" font-size="14" font-family="sans-serif" font-weight="bold">Claude Code</text>
+    <text x="270" y="104" fill="#dbe7f5" font-size="12.5" font-family="monospace">托管 / 组织级</text>
+    <text x="270" y="128" fill="#dbe7f5" font-size="12.5" font-family="monospace">~/.claude/CLAUDE.md</text>
+    <text x="270" y="152" fill="#dbe7f5" font-size="12.5" font-family="monospace">./CLAUDE.md（项目）</text>
+    <text x="270" y="176" fill="#dbe7f5" font-size="12.5" font-family="monospace">./CLAUDE.local.md</text>
+    <text x="270" y="204" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">支持 <tspan fill="#a8dcff">@path</tspan> 导入（最多 4 跳）</text>
+    <text x="270" y="224" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">子目录 CLAUDE.md → 按需</text>
+    <text x="270" y="248" fill="#ffb86b" font-size="11.5" font-family="sans-serif">AGENTS.md 需 @ 导入</text>
+
+    <!-- Trae -->
+    <rect x="484" y="54" width="220" height="212" rx="10" fill="#111c2e" stroke="#2a5a45"/>
+    <text x="502" y="80" fill="#6bffb8" font-size="14" font-family="sans-serif" font-weight="bold">Trae</text>
+    <text x="502" y="104" fill="#dbe7f5" font-size="12.5" font-family="monospace">~/.trae/user_rules</text>
+    <text x="502" y="128" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">（全局规则，所有项目）</text>
+    <text x="502" y="156" fill="#dbe7f5" font-size="12.5" font-family="monospace">.trae/rules/**/*.md</text>
+    <text x="502" y="180" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">（项目规则，递归 ≤3 层）</text>
+    <text x="502" y="208" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">仅 alwaysApply:true 的启动即生效</text>
+    <text x="502" y="228" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">globs / 智能 / 手动 → 触发式</text>
+    <text x="502" y="250" fill="#ffb86b" font-size="11.5" font-family="sans-serif">AGENTS.md / CLAUDE.md 不自动</text>
+
+    <!-- others -->
+    <rect x="716" y="54" width="224" height="212" rx="10" fill="#111c2e" stroke="#24354f"/>
+    <text x="734" y="80" fill="#8fa6c0" font-size="14" font-family="sans-serif" font-weight="bold">Cusror / Copilot / Gemini</text>
+    <text x="734" y="104" fill="#dbe7f5" font-size="12.5" font-family="monospace">.cursor/rules/*.mdc</text>
+    <text x="734" y="128" fill="#dbe7f5" font-size="12.5" font-family="monospace">copilot-instructions.md</text>
+    <text x="734" y="152" fill="#dbe7f5" font-size="12.5" font-family="monospace">GEMINI.md</text>
+    <text x="734" y="180" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">Cursor / Copilot 也认 AGENTS.md</text>
+    <text x="734" y="204" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">各有 globs / applyTo 条件规则</text>
+    <text x="734" y="232" fill="#6bffb8" font-size="11.5" font-family="sans-serif">趋势：AGENTS.md 正在成为公约数</text>
+  </svg>
+  <figcaption>图 2 · 每个工具"启动即读"的入口互不重叠。同一份规矩要让三家都读到，必须解决"入口分裂"。</figcaption>
+</div>
+
+<!-- ============ 3 ============ -->
+<h2 id="s3"><span class="k">3</span>四类"读到程度"分类学</h2>
+
+<p>回到你的原话，我把它翻译成精确的机制问题。你问的三档，其实是四档：</p>
+
+<div class="card grid">
+  <div class="box">
+    <h5>① 每次工作都会读（A 类）</h5>
+    <p>启动时自动注入会话，整个会话常驻。但它只 <b>读一次</b>——不是每一轮都重新读文件。改了文件要<b>新开会话</b>才生效。<br>
+    例：<code>AGENTS.md</code>（Codex）、<code>CLAUDE.md</code>（Claude）、<code>alwaysApply</code> 规则（Trae）。</p>
+  </div>
+  <div class="box">
+    <h5>② 读一次、之后同窗口不再读（A/B 类的"memoized"）</h5>
+    <p>这是 A 类的实现细节：内容在会话启动读一次并缓存；会话压缩（compact）后会被<b>重新读一遍</b>。<br>
+    另一类：<b>子目录</b>的 <code>CLAUDE.md</code>——agent 第一次读到该子目录的文件时才载入，之后缓存。</p>
+  </div>
+  <div class="box">
+    <h5>③ 优先但"不一定读到"（B 类）</h5>
+    <p>启动时只载入<b>标题/描述/触发条件</b>，正文只在条件命中或被调用时才进上下文。<br>
+    例：技能（skill）的名字+描述；Trae 的 <code>globs</code>/智能生效规则；Claude 的 path-scoped rules。</p>
+  </div>
+  <div class="box">
+    <h5>④ 完全靠它自己决定（C 类）</h5>
+    <p>没有任何机制保证它被读——agent 只有<b>主动搜索</b>或你<b>显式引用</b>时才看到。<br>
+    例：<code>README.md</code>、<code>Doc/**</code>、计划文档、HANDOFF、<code>events.jsonl</code>。</p>
+  </div>
+</div>
+
+<blockquote><strong>一句话记法：</strong>只有<b>入口文件</b>（AGENTS.md / CLAUDE.md / rules）是"每次必读"。其余所有文档都是"读了入口、顺着入口被指过去"才会被读。<b>入口文件是门，其它文件是门后的路。</b>门若没写"去读 X"，agent 大概率不会走那条路。</blockquote>
+
+<!-- ============ 4 ============ -->
+<h2 id="s4"><span class="k">4</span>Codex 的机制：AGENTS.md 指令链</h2>
+
+<p>Codex 每次<b>启动时</b>构建一次"指令链"（instruction chain），把沿途找到的 AGENTS.md 拼成一段文本，塞进本次会话第一条消息的最前面——<strong>先于你的任何提问</strong>。启动后不再动态加载。</p>
+
+<div class="fig">
+  <svg viewBox="0 0 960 340" role="img" aria-label="Codex AGENTS.md 指令链拼接顺序">
+    <text x="20" y="26" fill="#8fa6c0" font-size="13" font-family="sans-serif">Codex 启动时拼接（root-first, leaf-last —— 越靠后优先级越高）</text>
+    <line x1="20" y1="38" x2="940" y2="38" stroke="#24354f"/>
+
+    <rect x="40" y="58" width="620" height="46" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="58" y="86" fill="#dbe7f5" font-size="13" font-family="monospace">~/.codex/AGENTS.md</text>
+    <text x="380" y="86" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">全局个人默认（可选；若有 override 文件则替换它）</text>
+
+    <rect x="40" y="116" width="620" height="46" rx="8" fill="#16233a" stroke="#2a5a45"/>
+    <text x="58" y="144" fill="#dbe7f5" font-size="13" font-family="monospace">&lt;repo-root&gt;/AGENTS.md</text>
+    <text x="380" y="144" fill="#6bffb8" font-size="11.5" font-family="sans-serif">← 我们项目的规矩就在这一层</text>
+
+    <rect x="40" y="174" width="620" height="46" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="58" y="202" fill="#dbe7f5" font-size="13" font-family="monospace">&lt;repo&gt;/services/payments/AGENTS.md</text>
+    <text x="460" y="202" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">（子目录规则，仅当 cwd 在其下才拼入）</text>
+
+    <line x1="80" y1="228" x2="80" y2="248" stroke="#6bccff"/>
+    <line x1="80" y1="248" x2="700" y2="248" stroke="#6bccff"/>
+    <text x="360" y="266" fill="#6bccff" font-size="12" font-family="monospace">concatenate →（默认 ≤ 32 KiB，超出静默截断）</text>
+
+    <rect x="40" y="282" width="880" height="46" rx="8" fill="#0e1a2b" stroke="#6bccff"/>
+    <text x="58" y="310" fill="#c3d8ee" font-size="12.5" font-family="sans-serif">拼接结果 → 注入"本会话第一条消息最前" → 整个会话常驻 → 直到压缩后重新注入</text>
+  </svg>
+  <figcaption>图 3 · Codex 的 AGENTS.md 指令链。你的 cwd 决定链的长度：在仓库根开，读到根 AGENTS.md；在某子目录开，途中每一级的 AGENTS.md 都会拼进来。</figcaption>
+</div>
+
+<h4>对你三个问题的直接回答（Codex 侧）</h4>
+<ul>
+  <li><b>必读？</b>是。仓库根 <code>AGENTS.md</code> 会在每次启动时自动拼入，无需你提醒。但只在<b>会话启动读一次</b>。</li>
+  <li><b>读一次不重读？</b>是。启动即定，运行中不变。你改了 AGENTS.md，<b>当前窗口不会感知</b>，要开新窗口。</li>
+  <li><b>不一定读到？</b>是，除 AGENTS.md 外的一切文档（<code>CLAUDE.md</code>、<code>Doc/**</code>、<code>README.md</code>……）。注意 <b>Codex 默认不读 CLAUDE.md</b>，除非在 <code>config.toml</code> 用 <code>project_doc_fallback_filenames</code> 把它列为回退名。</li>
+  <li><b>还有一层"记忆"：</b>Codex 会在后台把过去的会话总结成 <code>~/.codex/memories/</code>，下次会话读入。它不由你直接编辑，属于 D 类。</li>
+</ul>
+
+<!-- ============ 5 ============ -->
+<h2 id="s5"><span class="k">5</span>Claude Code 的机制：CLAUDE.md 四层级</h2>
+
+<p>Claude Code 与 Codex 最大的结构差异：它的入口是 <code>CLAUDE.md</code>，且有<b>明确的层级</b>与<b>导入机制</b>。</p>
+
+<div class="fig">
+  <svg viewBox="0 0 960 300" role="img" aria-label="Claude Code CLAUDE.md 层级与导入">
+    <text x="20" y="26" fill="#8fa6c0" font-size="13" font-family="sans-serif">Claude Code：会话启动时按层级加载；<tspan fill="#a8dcff" font-family="monospace">@path</tspan> 把别的文件"展开"进来</text>
+    <line x1="20" y1="38" x2="940" y2="38" stroke="#24354f"/>
+
+    <rect x="30" y="56" width="240" height="52" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="46" y="80" fill="#dbe7f5" font-size="12.5" font-family="monospace">托管 / 组织级</text>
+    <text x="46" y="98" fill="#8fa6c0" font-size="11" font-family="sans-serif">公司统一规则（团队场景）</text>
+
+    <rect x="30" y="118" width="240" height="52" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="46" y="142" fill="#dbe7f5" font-size="12.5" font-family="monospace">~/.claude/CLAUDE.md</text>
+    <text x="46" y="160" fill="#8fa6c0" font-size="11" font-family="sans-serif">个人偏好（我，跨项目）</text>
+
+    <rect x="30" y="180" width="240" height="52" rx="8" fill="#16233a" stroke="#2a5a45"/>
+    <text x="46" y="204" fill="#dbe7f5" font-size="12.5" font-family="monospace">./CLAUDE.md</text>
+    <text x="46" y="222" fill="#6bffb8" font-size="11" font-family="sans-serif">← 项目规矩（随仓库走）</text>
+
+    <rect x="30" y="242" width="240" height="46" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="46" y="270" fill="#dbe7f5" font-size="12.5" font-family="monospace">./CLAUDE.local.md</text>
+
+    <line x1="286" y1="150" x2="336" y2="150" stroke="#6bccff" marker-end="url(#ar2)"/>
+    <defs>
+      <marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 z" fill="#6bccff"/>
+      </marker>
+    </defs>
+
+    <rect x="344" y="80" width="280" height="150" rx="9" fill="#0e1a2b" stroke="#6bccff"/>
+    <text x="362" y="106" fill="#6bccff" font-size="12.5" font-family="monospace">CLAUDE.md 里写：</text>
+    <text x="362" y="132" fill="#a8dcff" font-size="13" font-family="monospace">@AGENTS.md</text>
+    <text x="362" y="156" fill="#a8dcff" font-size="13" font-family="monospace">@Doc/README.md</text>
+    <text x="362" y="186" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">→ 被导入文件在启动时被"展开"，</text>
+    <text x="362" y="204" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">   与 CLAUDE.md 一起进入上下文；</text>
+    <text x="362" y="222" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">   可递归导入，最多 4 跳</text>
+
+    <rect x="644" y="80" width="286" height="150" rx="9" fill="#16233a" stroke="#5a4526"/>
+    <text x="662" y="106" fill="#ffb86b" font-size="12.5" font-family="sans-serif" font-weight="bold">另外两条按需通道</text>
+    <text x="662" y="132" fill="#dbe7f5" font-size="12" font-family="sans-serif">.claude/rules/ 里带 <tspan font-family="monospace" fill="#a8dcff">paths:</tspan> 的规则</text>
+    <text x="662" y="152" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">→ 只有操作匹配文件时才注入</text>
+    <text x="662" y="180" fill="#dbe7f5" font-size="12" font-family="sans-serif">子目录 CLAUDE.md</text>
+    <text x="662" y="200" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">→ 首次读到该子目录文件时才载入</text>
+    <text x="662" y="222" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">（二者都属 B 类"触发式"）</text>
+  </svg>
+  <figcaption>图 4 · Claude Code 的层级与导入。关键技巧：把 <code>CLAUDE.md</code> 写成一行 <code>@AGENTS.md</code>，即可让 Claude 复用 Codex 的同一份规矩，避免两份真源。</figcaption>
+</div>
+
+<p>Claude Code 还有一层 <b>auto memory</b>：它会把你在会话中的纠正、偏好自动记到 <code>~/.claude/projects/…/memory/</code>，供后续会话使用——这就是你机器上 <code>/Users/yuxuan/.trae-cn/memory/</code> 那套"记忆"的同类物，与"指令文件"是两回事。</p>
+
+<!-- ============ 6 ============ -->
+<h2 id="s6"><span class="k">6</span>Trae 的机制：规则 + 四种生效方式</h2>
+
+<p>Trae 的入口不叫 AGENTS.md，而是 <b>规则（Rule）</b>，分全局与项目两级，并且<b>每条规则</b>可单独指定生效方式——这比 Codex 的"整文件注入"更细粒度。</p>
+
+<div class="fig">
+  <svg viewBox="0 0 960 330" role="img" aria-label="Trae 规则的四种生效方式">
+    <text x="20" y="26" fill="#8fa6c0" font-size="13" font-family="sans-serif">Trae 规则：位置分两级，生效方式分四种（决定它属 A / B / C 哪一类）</text>
+    <line x1="20" y1="38" x2="940" y2="38" stroke="#24354f"/>
+
+    <rect x="24" y="54" width="300" height="120" rx="9" fill="#16233a" stroke="#24354f"/>
+    <text x="42" y="80" fill="#dbe7f5" font-size="13" font-family="monospace">~/.trae/user_rules</text>
+    <text x="42" y="104" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">全局：所有项目生效</text>
+    <text x="42" y="128" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">个人习惯、语言、提交风格…</text>
+    <text x="42" y="156" fill="#6bffb8" font-size="11.5" font-family="sans-serif">≈ A 类（启动即注入）</text>
+
+    <rect x="24" y="186" width="300" height="120" rx="9" fill="#16233a" stroke="#2a5a45"/>
+    <text x="42" y="212" fill="#dbe7f5" font-size="13" font-family="monospace">.trae/rules/**/*.md</text>
+    <text x="42" y="236" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">项目：仅本项目生效 · 递归 ≤3 层</text>
+    <text x="42" y="260" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">可用子目录归类（module-a/…）</text>
+    <text x="42" y="288" fill="#6bffb8" font-size="11.5" font-family="sans-serif">≈ 项目规矩的家</text>
+
+    <text x="352" y="70" fill="#8fa6c0" font-size="12.5" font-family="sans-serif">每条规则的"生效方式"：</text>
+
+    <rect x="352" y="82" width="584" height="52" rx="8" fill="#0e1a2b" stroke="#2a5a45"/>
+    <text x="370" y="104" fill="#6bffb8" font-size="12.5" font-family="monospace" font-weight="bold">始终生效</text>
+    <text x="470" y="104" fill="#dbe7f5" font-size="12" font-family="sans-serif">alwaysApply: true → 所有对话都注入</text>
+    <text x="370" y="124" fill="#8fa6c0" font-size="11.5" font-family="monospace">tag: A 类</text>
+
+    <rect x="352" y="142" width="584" height="52" rx="8" fill="#0e1a2b" stroke="#5a4526"/>
+    <text x="370" y="164" fill="#ffb86b" font-size="12.5" font-family="monospace" font-weight="bold">指定文件生效</text>
+    <text x="490" y="164" fill="#dbe7f5" font-size="12" font-family="sans-serif">globs: src/**/*.ts → 提到匹配文件时才生效</text>
+    <text x="370" y="184" fill="#8fa6c0" font-size="11.5" font-family="monospace">tag: B 类</text>
+
+    <rect x="352" y="202" width="584" height="52" rx="8" fill="#0e1a2b" stroke="#5a4526"/>
+    <text x="370" y="224" fill="#ffb86b" font-size="12.5" font-family="monospace" font-weight="bold">智能生效</text>
+    <text x="452" y="224" fill="#dbe7f5" font-size="12" font-family="sans-serif">description: 由 AI 判断相关性决定是否用</text>
+    <text x="370" y="244" fill="#8fa6c0" font-size="11.5" font-family="monospace">tag: B 类（最弱保证）</text>
+
+    <rect x="352" y="262" width="584" height="48" rx="8" fill="#0e1a2b" stroke="#3f3566"/>
+    <text x="370" y="284" fill="#b39dff" font-size="12.5" font-family="monospace" font-weight="bold">手动触发生效</text>
+    <text x="490" y="284" fill="#dbe7f5" font-size="12" font-family="sans-serif">只在对话里用 #Rule 提及才生效</text>
+    <text x="370" y="302" fill="#8fa6c0" font-size="11.5" font-family="monospace">tag: C 类</text>
+  </svg>
+  <figcaption>图 5 · Trae 规则的"位置 × 生效方式"两维。要让规矩"每次必读"，必须把它设成 <code>始终生效</code>（alwaysApply）。</figcaption>
+</div>
+
+<p>此外，Trae 的对话输入框支持 <code>#</code> 指定上下文：<code>#Rule</code>（引用项目规则）、<code>#File</code> / <code>#Folder</code> / <code>#Workspace</code> / <code>#Doc</code> / <code>#Past Chats</code> 等——这属于<b>手动把 C 类文件抬进本次会话</b>的主要手段。</p>
+
+<blockquote class="warn"><b>注意：</b>Trae <b>不会</b>自动读 <code>AGENTS.md</code> 或 <code>CLAUDE.md</code>。要让它遵守同一套规矩，得把内容放进 <code>.trae/rules/</code>（或 <code>~/.trae/user_rules</code>），并设为 <code>始终生效</code>。</blockquote>
+
+<!-- ============ 7 ============ -->
+<h2 id="s7"><span class="k">7</span>本项目（EndlessSpace）的现状实拍</h2>
+
+<p>把上面的机制套到我们仓库，现状是这样的：</p>
+
+<div class="fig">
+  <svg viewBox="0 0 960 360" role="img" aria-label="EndlessSpace 文件与各 agent 实际读取情况">
+    <text x="20" y="24" fill="#8fa6c0" font-size="13" font-family="sans-serif">EndlessSpace 仓库：文件 → 谁真正会读到</text>
+    <line x1="20" y1="36" x2="940" y2="36" stroke="#24354f"/>
+
+    <!-- repo files -->
+    <rect x="24" y="52" width="300" height="52" rx="8" fill="#16233a" stroke="#2a5a45"/>
+    <text x="42" y="76" fill="#dbe7f5" font-size="12.5" font-family="monospace">AGENTS.md</text>
+    <text x="42" y="94" fill="#8fa6c0" font-size="11" font-family="sans-serif">协作规范 / 截图链路 / 验收铁律</text>
+
+    <rect x="24" y="112" width="300" height="52" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="42" y="136" fill="#dbe7f5" font-size="12.5" font-family="monospace">CLAUDE.md</text>
+    <text x="42" y="154" fill="#8fa6c0" font-size="11" font-family="sans-serif">提交规范 / 产品边界 / DevConfigs</text>
+
+    <rect x="24" y="172" width="300" height="52" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="42" y="196" fill="#dbe7f5" font-size="12.5" font-family="monospace">README.md / Doc/README.md</text>
+    <text x="42" y="214" fill="#8fa6c0" font-size="11" font-family="sans-serif">文档索引（写给人看的）</text>
+
+    <rect x="24" y="232" width="300" height="52" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="42" y="256" fill="#dbe7f5" font-size="12.5" font-family="monospace">Doc/godot/plans/*.md</text>
+    <text x="42" y="274" fill="#8fa6c0" font-size="11" font-family="sans-serif">计划 + 验收 + 改动文件</text>
+
+    <rect x="24" y="292" width="300" height="52" rx="8" fill="#16233a" stroke="#24354f"/>
+    <text x="42" y="316" fill="#dbe7f5" font-size="12.5" font-family="monospace">.agentic/tasks/events.jsonl</text>
+    <text x="42" y="334" fill="#8fa6c0" font-size="11" font-family="sans-serif">任务状态真源（新工具）</text>
+
+    <defs>
+      <marker id="ar3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 z" fill="#6bccff"/>
+      </marker>
+    </defs>
+
+    <!-- codex column -->
+    <rect x="360" y="52" width="180" height="292" rx="9" fill="#0e1a2b" stroke="#2a5a45"/>
+    <text x="378" y="76" fill="#6bffb8" font-size="13" font-family="sans-serif" font-weight="bold">Codex 自动读</text>
+    <text x="378" y="98" fill="#6bffb8" font-size="11.5" font-family="sans-serif">✅ AGENTS.md</text>
+    <text x="378" y="120" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">（启动拼接）</text>
+    <text x="378" y="150" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ CLAUDE.md</text>
+    <text x="378" y="172" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ Doc/**</text>
+    <text x="378" y="194" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ events.jsonl</text>
+    <text x="378" y="222" fill="#ffb86b" font-size="11.5" font-family="sans-serif">仅当它自己搜索</text>
+    <line x1="324" y1="78" x2="356" y2="78" stroke="#6bccff" marker-end="url(#ar3)"/>
+
+    <!-- claude column -->
+    <rect x="556" y="52" width="180" height="292" rx="9" fill="#0e1a2b" stroke="#2a5a45"/>
+    <text x="574" y="76" fill="#6bffb8" font-size="13" font-family="sans-serif" font-weight="bold">Claude 自动读</text>
+    <text x="574" y="98" fill="#6bffb8" font-size="11.5" font-family="sans-serif">✅ CLAUDE.md</text>
+    <text x="574" y="120" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">（四层级；@ 可导入）</text>
+    <text x="574" y="150" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ AGENTS.md</text>
+    <text x="574" y="172" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ Doc/**</text>
+    <text x="574" y="194" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ events.jsonl</text>
+    <text x="574" y="222" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">除非 CLAUDE.md 写 @</text>
+    <line x1="324" y1="134" x2="552" y2="134" stroke="#6bccff" marker-end="url(#ar3)"/>
+
+    <!-- trae column -->
+    <rect x="752" y="52" width="184" height="292" rx="9" fill="#0e1a2b" stroke="#5a4526"/>
+    <text x="770" y="76" fill="#ffb86b" font-size="13" font-family="sans-serif" font-weight="bold">Trae 自动读</text>
+    <text x="770" y="98" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ AGENTS.md</text>
+    <text x="770" y="120" fill="#ff7a85" font-size="11.5" font-family="sans-serif">✗ CLAUDE.md</text>
+    <text x="770" y="148" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">只读 .trae/rules/</text>
+    <text x="770" y="170" fill="#ff7a85" font-size="11.5" font-family="sans-serif">（本仓库目前为空！）</text>
+    <text x="770" y="200" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">+ #Rule/#File 手动引用</text>
+    <text x="770" y="228" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">+ 工作区索引（我用的</text>
+    <text x="770" y="246" fill="#8fa6c0" font-size="11.5" font-family="sans-serif">   memory 机制）</text>
+  </svg>
+  <figcaption>图 6 · 现状实拍。同一个仓库、同一套规矩，三家 agent 各自的"入口"其实<b>互不重叠</b>：Codex 走 AGENTS.md，Claude 走 CLAUDE.md，Trae 走 .trae/rules（当前为空）。</figcaption>
+</div>
+
+<h4>现状的四个坑</h4>
+<ol>
+  <li><b>两份真源、内容已经分叉。</b><code>AGENTS.md</code> 与 <code>CLAUDE.md</code> 各写了一遍"协作与分支规范"（措辞还不一样）。改一处忘一处就是漂移——和你刚修的"计划文档状态漂移"是同一类病。</li>
+  <li><b>Trae 现在读不到我们的规矩。</b><code>.trae/rules/</code> 目录都没建。我（Trae）之所以"知道"这些，是因为我会主动搜 <code>Doc/**</code> 并读到了计划/交接文档——这是 C 类运气，不是保证。</li>
+  <li><b>计划文档与新任务状态真的"没入口"。</b><code>task_state.py</code> 和 <code>.agentic/tasks/events.jsonl</code> 刚建好，但 <b>没有任何入口文件提到它们</b>。除非 agent 恰好搜到，否则它不会用。</li>
+  <li><b>Codex 默认看不到 CLAUDE.md。</b>反过来 Claude 也默认看不到 AGENTS.md。我们的"运行与截图链路"只写在 AGENTS.md 里，Claude 侧的可见性靠运气。</li>
+</ol>
+
+<!-- ============ 8 ============ -->
+<h2 id="s8"><span class="k">8</span>场景推演：新开 Codex 窗口说"去做 P1-3"</h2>
+
+<p>现在把机制拼起来，逐步推演你设想的那个场景：</p>
+
+<div class="fig">
+  <svg viewBox="0 0 960 420" role="img" aria-label="Codex 新窗口处理 P1-3 的时序推演">
+    <text x="20" y="24" fill="#8fa6c0" font-size="13" font-family="sans-serif">时序：新开 Codex 窗口 → "你去解决 P1-3"</text>
+    <line x1="20" y1="36" x2="940" y2="36" stroke="#24354f"/>
+
+    <!-- step1 -->
+    <circle cx="46" cy="72" r="15" fill="#16233a" stroke="#6bccff"/>
+    <text x="41" y="77" fill="#6bccff" font-size="12" font-family="monospace">1</text>
+    <text x="76" y="68" fill="#dbe7f5" font-size="12.5" font-family="sans-serif">启动：构建 AGENTS.md 指令链，注入会话最前</text>
+    <text x="76" y="88" fill="#6bffb8" font-size="11.5" font-family="sans-serif">→ 它读到了：单主干规范、验收铁律、截图链路、"分派前填矩阵"</text>
+
+    <!-- step2 -->
+    <circle cx="46" cy="138" r="15" fill="#16233a" stroke="#6bccff"/>
+    <text x="41" y="143" fill="#6bccff" font-size="12" font-family="monospace">2</text>
+    <text x="76" y="134" fill="#dbe7f5" font-size="12.5" font-family="sans-serif">你输入"去解决任务 P1-3"</text>
+    <text x="76" y="154" fill="#ffb86b" font-size="11.5" font-family="sans-serif">→ 它不知道 P1-3 是什么：AGENTS.md 里没有任务清单/状态</text>
+
+    <!-- step3 -->
+    <circle cx="46" cy="204" r="15" fill="#16233a" stroke="#6bccff"/>
+    <text x="41" y="209" fill="#6bccff" font-size="12" font-family="monospace">3</text>
+    <text x="76" y="200" fill="#dbe7f5" font-size="12.5" font-family="sans-serif">它自己去搜："P1-3" 出现在哪个文档？</text>
+    <text x="76" y="220" fill="#ff7a85" font-size="11.5" font-family="sans-serif">→ 命中：device-parity-remediation-plan.md（若搜到位）</text>
+
+    <!-- step4 -->
+    <circle cx="46" cy="270" r="15" fill="#16233a" stroke="#6bccff"/>
+    <text x="41" y="275" fill="#6bccff" font-size="12" font-family="monospace">4</text>
+    <text x="76" y="266" fill="#dbe7f5" font-size="12.5" font-family="sans-serif">找到任务定义（需求/验收/改动文件）</text>
+    <text x="76" y="286" fill="#ff7a85" font-size="11.5" font-family="sans-serif">→ 但看不到真实状态：它不知道该任务已 active、不知要跑 task_state.py</text>
+
+    <!-- step5 -->
+    <circle cx="46" cy="336" r="15" fill="#16233a" stroke="#6bccff"/>
+    <text x="41" y="341" fill="#6bccff" font-size="12" font-family="monospace">5</text>
+    <text x="76" y="332" fill="#dbe7f5" font-size="12.5" font-family="sans-serif">于是：不登记 claim / 不跑工具 / 直接改文件 / 状态继续漂移</text>
+    <text x="76" y="352" fill="#ff7a85" font-size="11.5" font-family="sans-serif">→ 结果：又回到你刚花力气消灭的"文档 vs 现实脱节"</text>
+
+    <rect x="40" y="374" width="896" height="36" rx="8" fill="#1f1416" stroke="#ff7a85"/>
+    <text x="58" y="397" fill="#ff7a85" font-size="12.5" font-family="sans-serif">根因：AGENTS.md 是"门"，但它没写"钥匙在哪个房间"——没指向计划文档与状态工具。</text>
+  </svg>
+  <figcaption>图 7 · 结论：Codex <b>能</b>知道"大规矩"，但<b>默认不知道</b>"P1-3 的定义与状态"，因为我们把这两样放在了它不会自动读的 C 类文件里。</figcaption>
+</div>
+
+<p>一句话总结这个场景：<strong>它知道"江湖规矩"，但不知道"这一票具体要干什么、干到哪了"。</strong>因为 AGENTS.md 只装得下"稳定的大原则"，装不下"每个任务的动态细节"——后者必须靠"入口文件里的指针 + agent 主动执行工具"来解决。</p>
+
+<!-- ============ 9 ============ -->
+<h2 id="s9"><span class="k">9</span>处方：单一真源 + 指针</h2>
+
+<p>问题的本质不是"文件放哪"，而是<b>"门"与"门后的路"没有连起来</b>。三条规则就能理顺：</p>
+
+<div class="card">
+  <h4>规则一：一份真源，其余全是"指向它的一行"</h4>
+  <p>把内容统一写在 <code>AGENTS.md</code>（各家都在向它收敛），然后让其它入口只做<b>转发</b>：</p>
+  <pre><code># CLAUDE.md  ← 全文只有这一行转发，不再复制内容
+@AGENTS.md</code></pre>
+  <pre><code># .trae/rules/project.md  ← Trae 侧，同样只转发
+---
+alwaysApply: true
+---
+项目全部规矩以仓库根 AGENTS.md 为唯一真源，开工前先读它，再按它指引读 Doc/** 与计划文档。</code></pre>
+  <p class="src">这样三家的"门"都通到同一间屋。<b>改一处，处处生效</b>；再不会出现两份规范分叉。</p>
+</div>
+
+<div class="card">
+  <h4>规则二：入口文件必须写"指针"，不能只写原则</h4>
+  <p>AGENTS.md 里要显式列出"要去哪读、要跑哪个工具"，否则 C 类文件永远靠运气被搜到：</p>
+  <pre><code>## 任务在哪、状态怎么查（硬性，开工前必做）
+- 任务定义/验收/改动文件 → Doc/godot/plans/&lt;批次&gt;-*.md
+- 任务真实状态（唯一真源）→ .agentic/tasks/events.jsonl
+- 查状态：python3 agentic_workflow/tools/task_state.py --plan &lt;计划&gt; status P1-3
+- 认领/推进/提交/验收：
+    ... task_state.py claim/start/submit/done &lt;任务ID&gt; --agent &lt;你的ID&gt;
+- 分派前查文件重叠：python3 agentic_workflow/tools/check_file_ownership.py P1-3 ...</code></pre>
+  <p class="src">把"工具的调用方式"当作规矩的一部分写进入口——这样 Codex 一启动就"知道有这把钥匙"。</p>
+</div>
+
+<div class="card">
+  <h4>规则三：把"必读"与"按需"分层摆放</h4>
+  <ul>
+    <li><b>A 类（放入口文件）</b>：稳定的大原则——单主干、验收铁律、提交规范、指针清单。保持精简（Claude 建议 &lt;500 行；Codex 默认上限 32 KiB）。</li>
+    <li><b>B 类（按需）</b>：路径专属规则（改 <code>Godot/presentation/**</code> 才加载的布局约束）、技能（截图流程、双端对比 SOP）。</li>
+    <li><b>C 类（文档）</b>：计划文档、HANDOFF、状态日志。靠"入口文件里的指针"被找到，而不是指望 agent 瞎搜。</li>
+  </ul>
+</div>
+
+<blockquote><b>这套处方与刚才修的状态漂移是同一个道理：</b>状态要"单一真源 + 工具读写"；规矩也要"单一真源 + 入口指针"。两者都拒绝"同一事实写两遍、且没人负责同步"。</blockquote>
+
+<h4>落地清单（建议顺序）</h4>
+<ol>
+  <li>把 <code>CLAUDE.md</code> 收敛成 <code>@AGENTS.md</code> + 少量 Claude 专属内容（不再复制规范正文）。</li>
+  <li>新建 <code>.trae/rules/project.md</code>（<code>alwaysApply: true</code>），内容为"以 AGENTS.md 为真源 + 指针清单"。</li>
+  <li>在 <code>AGENTS.md</code> 增一节「任务与状态入口」，写上第 9 节的指针清单（含 <code>task_state.py</code> 用法）。</li>
+  <li>（可选）给 Codex 配 <code>project_doc_fallback_filenames</code>，或在 AGENTS.md 顶部一行 <code>@CLAUDE.md</code> 反向兜底，消除入口盲区。</li>
+</ol>
+
+<hr>
+
+<h3>附：一张图看懂四问</h3>
+
+<div class="fig">
+  <svg viewBox="0 0 960 300" role="img" aria-label="四类读取程度对照">
+    <text x="20" y="24" fill="#8fa6c0" font-size="13" font-family="sans-serif">你的四问 → 精确答案</text>
+    <line x1="20" y1="36" x2="940" y2="36" stroke="#24354f"/>
+
+    <rect x="24" y="52" width="216" height="180" rx="9" fill="#0e1a2b" stroke="#2a5a45"/>
+    <text x="42" y="78" fill="#6bffb8" font-size="12.5" font-family="sans-serif" font-weight="bold">每次必读</text>
+    <text x="42" y="104" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">AGENTS.md（Codex）</text>
+    <text x="42" y="126" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">CLAUDE.md（Claude）</text>
+    <text x="42" y="148" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">.trae/rules alwaysApply</text>
+    <text x="42" y="170" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">.cursor/rules alwaysApply</text>
+    <text x="42" y="200" fill="#8fa6c0" font-size="11" font-family="sans-serif">各自入口不同，互不通用</text>
+
+    <rect x="252" y="52" width="216" height="180" rx="9" fill="#0e1a2b" stroke="#2a5a45"/>
+    <text x="270" y="78" fill="#6bffb8" font-size="12.5" font-family="sans-serif" font-weight="bold">读一次，同窗口不再读</text>
+    <text x="270" y="104" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">上述入口都是"启动读一次"</text>
+    <text x="270" y="126" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">子目录 CLAUDE.md 首触载入</text>
+    <text x="270" y="148" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">compact 后会被重读</text>
+    <text x="270" y="178" fill="#ffb86b" font-size="11" font-family="sans-serif">改了文件 → 必须新开会话</text>
+
+    <rect x="480" y="52" width="216" height="180" rx="9" fill="#0e1a2b" stroke="#5a4526"/>
+    <text x="498" y="78" fill="#ffb86b" font-size="12.5" font-family="sans-serif" font-weight="bold">优先但不一定读到</text>
+    <text x="498" y="104" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">技能：名字+描述常驻，正文按需</text>
+    <text x="498" y="126" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">globs / paths 条件规则</text>
+    <text x="498" y="148" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">智能生效规则</text>
+    <text x="498" y="178" fill="#8fa6c0" font-size="11" font-family="sans-serif">条件不命中就不进上下文</text>
+
+    <rect x="708" y="52" width="228" height="180" rx="9" fill="#0e1a2b" stroke="#3f3566"/>
+    <text x="726" y="78" fill="#b39dff" font-size="12.5" font-family="sans-serif" font-weight="bold">靠它自己决定读到</text>
+    <text x="726" y="104" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">README.md、Doc/**</text>
+    <text x="726" y="126" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">计划文档、HANDOFF</text>
+    <text x="726" y="148" fill="#dbe7f5" font-size="11.5" font-family="sans-serif">events.jsonl（状态日志）</text>
+    <text x="726" y="178" fill="#ff7a85" font-size="11" font-family="sans-serif">没有任何自动保证</text>
+    <text x="726" y="200" fill="#8fa6c0" font-size="11" font-family="sans-serif">→ 所以入口文件必须"指向"它们</text>
+  </svg>
+  <figcaption>图 8 · 四问总览。把"必须遵守的"放进前三格，把"细节文档"放第四格并用指针连起来。</figcaption>
+</div>
+
+<!-- ============ 10 ============ -->
+<h2 id="s10"><span class="k">10</span>来源</h2>
+<ul class="src">
+  <li><a href="https://code.claude.com/docs/en/memory">How Claude remembers your project — Claude Code Docs</a>：CLAUDE.md 层级、@ 导入（≤4 跳）、AGENTS.md 支持、auto memory。</li>
+  <li><a href="https://claude.com/blog/steering-claude-code-skills-hooks-rules-subagents-and-more">Steering Claude Code — Anthropic</a>：各机制加载时机、compact 行为、路径规则。</li>
+  <li><a href="https://docs.anthropic.com/en/docs/claude-code/features-overview">Extend Claude Code — Anthropic</a>：CLAUDE.md 与会话启动、&lt;500 行建议。</li>
+  <li><a href="https://www.codegateway.dev/en/blog/agents-md-playbook-2026">AGENTS.md Hierarchy Playbook 2026 — CodeGateway</a>：Codex 指令链查找顺序、32 KiB 上限、override 机制。</li>
+  <li><a href="https://thepromptshelf.dev/blog/agents-md-codex-setup-guide-2026/">AGENTS.md for OpenAI Codex: Complete Setup Guide (2026)</a>：启动拼接、project_doc_fallback_filenames。</li>
+  <li><a href="https://mem0.ai/blog/how-memory-works-in-codex-cli">Codex CLI Memory: How It Works</a>：AGENTS.md 静态层 + Memories 生成层。</li>
+  <li><a href="https://agents.md/">agents.md — 开放标准（Linux Foundation / Agentic AI Foundation）</a>：被 60,000+ 项目、25+ 工具采用。</li>
+  <li><a href="https://docs.trae.ai/ide/rules">规则（Rule）— Trae 官方文档</a>：全局/项目规则、四种生效方式、目录结构、≤3 层嵌套。</li>
+  <li><a href="https://docs.trae.ai/ide/number-sign">使用 # 符号指定上下文 — Trae 官方文档</a>：#Rule / #File / #Folder / #Workspace 等。</li>
+</ul>
+
+<p class="foot">Agent 的记忆与知识管理 · 2026-10-05 · 实例：EndlessSpace（<code>codex/godot-integration</code>）</p>
+
+</main>
+</div>
+</body>
+</html>
