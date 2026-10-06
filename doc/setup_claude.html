@@ -78,6 +78,7 @@
     <li><a href="#s3">bus_wake 怎么找到并叫醒会话</a></li>
     <li><a href="#s4">投递规则：送达 / 挂起 / 拒收</a></li>
     <li><a href="#s5">验证步骤（端到端）</a></li>
+    <li><a href="#s5b">把会话放进 VS Code 侧栏</a></li>
     <li><a href="#s6">踩过的坑</a></li>
     <li><a href="#s7">排错速查</a></li>
     <li><a href="#s8">安全边界与撤销</a></li>
@@ -216,6 +217,20 @@ launchctl kickstart -k gui/$(id -u)/com.endlessspace.bus-wake   # 让 watch 加�
   <li>对方用 <code>bus.py send</code> 回复后，发送方也会被自动叫醒（2026-10-05 实测：#356 → #358，全程无人工）。</li>
 </ol>
 <blockquote>想在不打扰真实车道的情况下测试，可以起一个临时后台会话：<code>claude --bg -n waketest --permission-mode bypassPermissions "只回复 ready"</code>，用 <code>claude logs &lt;id&gt;</code> 看输出（挂起时会显示 Held peer message），测完用 <code>claude stop &lt;id&gt;</code> 关掉。</blockquote>
+
+<h2 id="s5b">把会话放进 VS Code 侧栏</h2>
+<p><code>claude --bg</code> 开的后台会话由命令行托管，<strong>VS Code 侧栏里看不到</strong>：侧栏只列 VS Code 扩展自己开的会话。正在运行的后台会话也没法在 VS Code 里打开，见 <a href="https://github.com/anthropics/claude-code/issues/77162">#77162</a>：扩展用 stream-json 恢复会话，后台会话是终端托管的，两者不兼容。下面的办法 2026-10-05 实测可用：</p>
+<ol>
+  <li><strong>先停掉后台会话：</strong><code>claude stop &lt;id&gt;</code>。停掉后，它的对话记录就是一份普通的会话记录。<strong>不要</strong>运行 <code>claude rm</code>，它会连 worktree 一起删掉，未提交的改动就没了。</li>
+  <li><strong>用 URI 让 VS Code 接着打开：</strong>
+<pre><code>open "vscode://anthropic.claude-code/open?session=&lt;完整 sessionId&gt;"
+# 可选参数 &amp;prompt=&lt;URL 编码&gt;：只预填输入框，不会自动发送</code></pre>
+  完整上下文都会保留，会话会出现在侧栏，<code>~/.claude/sessions/&lt;pid&gt;.json</code> 里的 <code>entrypoint</code> 变成 <code>claude-vscode</code>。</li>
+  <li><strong>会话必须属于当前工作区：</strong>如果后台会话开在 worktree 里（例如 <code>.claude/worktrees/p4q</code>），它的对话记录在 <code>~/.claude/projects/&lt;worktree 路径编码&gt;/</code> 下，主工作区找不到。先把这份 <code>.jsonl</code> 复制到主项目目录 <code>~/.claude/projects/-Users-…-EndlessSpace/</code>，再用 URI 打开。打开后会话仍然在原来的 worktree 目录里工作。</li>
+  <li><strong>叫醒它：</strong><code>bus_wake.py watch --once</code>，或者给它发一条总线消息。</li>
+</ol>
+<blockquote class="warn"><strong>坑：会话以为自己是被替换掉的旧会话。</strong>交接消息如果写成「交给新的 VS Code 会话」，被搬过去的会话会理解成「有另一个会话来接手了」，于是礼貌地停手。交接消息要写成：<em>「你就是被搬进 VS Code 的同一个会话，继续干」</em>。</blockquote>
+<p><strong>以后新开车道，更省事的做法：</strong>不用 <code>--bg</code>。先用 <code>claude -p "&lt;车道启动提示，最后只回复『待命』&gt;" --permission-mode bypassPermissions</code> 跑完第一轮（这一轮会写出对话记录，记录里有 <code>--agent</code>，bus_wake 就能认出它），再用 <code>open "vscode://anthropic.claude-code/open?session=&lt;id&gt;"</code> 把它放进侧栏，最后用 bus_wake 发「开工」。整个过程不需要手动粘贴。</p>
 
 <h2 id="s6">踩过的坑</h2>
 <div class="tblwrap"><table>

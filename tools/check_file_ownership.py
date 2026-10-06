@@ -38,6 +38,7 @@ import argparse
 import fnmatch
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -181,6 +182,26 @@ def print_all(ownership: dict[str, list[str]], repo: Path) -> None:
         print(f"  {conflict['a']} ↔ {conflict['b']}: {'；'.join(conflict['files'])}")
 
 
+def cross_plan_agent_clashes(plan: Path) -> bool:
+    """车道 agent ID 不得被其它 active 计划的车道占用（一个 ID = 一个会话）；有撞车返回 True。"""
+    import plans as plans_mod
+    try:
+        repo = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True,
+                                   text=True, cwd=plan.resolve().parent).stdout.strip())
+    except OSError:
+        return False
+    root = repo / ".agentic"
+    if not root.is_dir():
+        return False
+    own = next((name for name, _, meta in plans_mod.active_plans(root)
+                if meta.get("source") and (repo / meta["source"]).resolve() == plan.resolve()), "")
+    clashes = plans_mod.agent_clashes(root, own, plan)
+    for agent, others in clashes.items():
+        print(f"✗ 车道 agent ID {agent} 已在 active 计划 {', '.join(others)} 的车道表里（一个 ID 对应一个会话）；"
+              f"改用新 ID，或确是同一会话时在本计划 plan.json 的 shared_agents 登记", file=sys.stderr)
+    return bool(clashes)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="分派前校验任务集合的文件所有权重叠（解析计划文档的「改动文件」列）。"
@@ -221,7 +242,10 @@ def main(argv: list[str] | None = None) -> int:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import lanes as lanes_mod
         forwarded = ["--plan", str(plan)] + (["--components"] if args.components else [])
-        return lanes_mod.main(forwarded)
+        code = lanes_mod.main(forwarded)
+        if args.lanes and cross_plan_agent_clashes(Path(plan)):
+            return code or 1
+        return code
 
     if args.explain:
         files = ownership.get(args.explain)

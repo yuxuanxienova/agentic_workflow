@@ -208,6 +208,7 @@ tail -f .agentic/bus/wake_logs/watch.out</code></pre>
 <tr><td>8</td><td>唤醒的那一轮卡住不动</td><td>会话在等审批或用户输入。审批请求发给了发起这一轮的客户端，也就是 bus_wake，它不会处理，只会在日志里打 ⚠。把车道会话的审批策略设成不需要人工审批，或者去 App 里处理</td></tr>
 <tr><td>9</td><td>（社区已知）App 的 SSH 代理有时自己另起 app-server，不连共享 daemon</td><td>见 <a href="https://github.com/openai/codex/issues/24542">#24542</a>。现象和坑 4 一样，报 active writer。处理办法：<code>codex app-server daemon restart</code> 后重连远程项目</td></tr>
 <tr><td>10</td><td>文档、浏览器等界面看不到</td><td>不是问题。会话就在 App 里，图片、diff 照常显示，「CLI 看东西麻烦」的问题不存在</td></tr>
+<tr><td>12</td><td>App 里明明开了「Full access」，脚本开的会话还是经常 awaiting approval；<code>git worktree add</code> 被 <code>.git</code> 权限拦下</td><td>「Full access」是<strong>每个会话单独设置</strong>，不是全局。<code>thread/start</code> 不传权限时会落回 <code>config.toml</code> 默认值（<code>on-request</code> + <code>workspaceWrite</code>，<code>.git</code> 只读）。现在 <code>bus_wake.py</code> 的 spawn 带 <code>FULL_ACCESS</code>，每次注入的 <code>turn/start</code> 带 <code>TURN_FULL_ACCESS</code>。注意：已经加载的会话用 <code>thread/resume</code> 改权限<strong>不生效</strong>，只有 <code>turn/start</code> 的参数会对本轮及之后各轮生效。也可以在 <code>config.toml</code> 顶层写 <code>approval_policy = "never"</code>、<code>sandbox_mode = "danger-full-access"</code> 作为全局默认（影响所有 Codex 会话，包括 CLI）</td></tr>
 </table></div>
 
 <h2 id="s6">排错速查</h2>
