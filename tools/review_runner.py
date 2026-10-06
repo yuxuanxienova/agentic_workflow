@@ -48,6 +48,16 @@ RUN_TIMEOUT = 45 * 60        # 单批上限（含跑测试）
 BUDGET_USD = os.environ.get("AGENTIC_REVIEW_BUDGET_USD", "5")
 TOOLS = Path(__file__).resolve().parent
 
+
+def claude_bin() -> str:
+    """launchd 的 PATH 不含 ~/.local/bin：显式找 claude（AGENTIC_CLAUDE_BIN 可覆盖）。"""
+    import shutil
+    for candidate in (os.environ.get("AGENTIC_CLAUDE_BIN"), shutil.which("claude"),
+                      str(Path.home() / ".local/bin/claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return "claude"
+
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -181,7 +191,7 @@ def packet(root: Path, plan: str, task: str) -> str:
 
 
 def ask_claude(repo: Path, prompt: str) -> tuple[dict | None, dict]:
-    cmd = ["claude", "-p", prompt, "--model", MODEL, "--effort", EFFORT, "--output-format", "json",
+    cmd = [claude_bin(), "-p", prompt, "--model", MODEL, "--effort", EFFORT, "--output-format", "json",
            "--json-schema", json.dumps(SCHEMA), "--no-session-persistence",
            "--allowedTools", "Read", "Grep", "Glob", "Bash",
            "--disallowedTools", "Edit", "Write", "NotebookEdit",
