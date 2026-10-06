@@ -44,7 +44,7 @@ BATCH = 3                    # 攒满几条验收一次
 MAX_WAIT = 20 * 60           # 最早一条最多等多久（秒）
 MAX_BATCH = 6                # 一批最多几个任务（太多材料会稀释注意力）
 MAX_ATTEMPTS = 2             # 同一任务验收失败几次后转协调人
-RUN_TIMEOUT = 45 * 60        # 单批上限（含跑测试）
+RUN_TIMEOUT = 25 * 60        # 单批上限（含跑一遍测试）；偶发卡死时尽快重试
 BUDGET_USD = os.environ.get("AGENTIC_REVIEW_BUDGET_USD", "5")
 TOOLS = Path(__file__).resolve().parent
 
