@@ -119,6 +119,47 @@ python3 tools/bus_wake.py watch [--interval 20] [--direct-only]
 
 退出码：`0` 成功；`2` 用法/连接错误；`3` 会话忙已跳过。
 
+#### 省 token：路由 / 条件 / 防抖 / 摘要（`wake_routing.py`）
+
+plan5 实测：Codex 车道 205 次唤醒里 184 次空转，每次空转约 24 万输入 token（重放会话上下文）。
+现在由守护进程按规则判断「这条消息跟你有没有关系」，不调模型；按 plan5 历史回放，唤醒 223 → 39 次。
+
+- **路由**：点对点照叫（`ACCEPT` 回执不单独叫；同一发送方/任务的 `CONFLICT` 只叫一次）；广播 `CLAIM/RELEASE/ACCEPT/CONFLICT` 不叫；
+  `DONE X` 只叫「后继任务因此真正解锁（前置全 done）」的车道 agent；`BLOCKED/REQUEST_HELP X` 只叫 X 前置的持有者；
+  正文点名你一定叫；车道已全部 done 的 agent 只收点对点。协调人照收所有非静默广播。
+- **条件唤醒**：等前置的 agent 跑 `bus_wake.py until --agent <我> --task <X[,Y]>`，期间只收点对点 / 点名 / INTERRUPT；
+  `task_state.py` 写事件后自动 `check`，条件满足立刻叫醒并清除。`task_state done X` 还会直接叫醒因 X 解锁的后继车道，
+  不必等对方广播 DONE。`until --clear` 取消。
+- **防抖**：`send` 后先等 `AGENTIC_WAKE_DEBOUNCE`（默认 90）秒，窗口内的后续消息并入同一次唤醒；`INTERRUPT` 不防抖。
+- **摘要内联**：唤醒文案直接附上相关消息（点对点全文、广播 300 字预览）和「另有 N 条无关」，并代为推进收件箱游标，
+  agent 不用再跑 `bus.py read`。
+- 计划解析失败时退回「全部相关」，宁多叫不漏叫。测试：`python3 -m unittest tools/test_wake_routing.py`。
+
+#### Trae 通道
+
+Trae CN 没有公开 API；`trae_bridge/` 是一个本地扩展，在 `~/.trae-cn/agentic-bridge.sock` 收一行 JSON，
+经 Trae 内置 IM 桥命令 `im.bridge.handleIncomingMessage` 把文本投进 **Trae 当前选中的 agent 会话**（聊天面板可见）。
+bus_wake 发现桥在线且 Trae 窗口打开本仓库，就把它当作 `trae-1`（可在 `bus/trae_agent.txt` 改）自动叫醒，
+`bus.py send --to trae-1` 即触发。Trae 无空闲查询，忙时由 Trae 自己排队，每批新消息只投一次。
+
+```bash
+bash trae_bridge/install.sh      # 然后在 Trae 里 Developer: Reload Window
+python3 tools/bus_wake.py list   # 出现 trae  trae-1 … 即接通
+```
+
+坑：内部命令随 Trae 升级可能改名（3.3.104 实测）；只能投到当前会话；`feishu.bridge.sendAndWaitResponse` 在 SOLO 模式下立即返回空，不要用。
+
+### 4c. `lane_patrol.py` — 车道巡检
+
+补 bus_wake 的盲区：车道卡住却不发消息时没人会被叫醒。launchd `com.endlessspace.lane-patrol` 每 30 分钟跑一次，
+检查 无人 / 停滞 / 空转 / 可调序 / 可解锁；**有发现才**以 `claude-endlessspace-patrol` 身份给协调人发 INTERRUPT（会自动叫醒协调人），
+同样的发现 2 小时内不重复报。输出 `bus/wake_logs/patrol.out`。
+
+```bash
+python3 tools/lane_patrol.py --dry-run          # 只看不发
+python3 tools/lane_patrol.py --stale 30 --repeat 120
+```
+
 ### 5. `validate_domains.py` — 功能域树校验
 
 校验功能域树 JSON（`templates/` 与 `examples/` 共用同一结构）。规则：`version` 存在；`id` 全局

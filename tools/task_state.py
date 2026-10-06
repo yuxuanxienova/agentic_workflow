@@ -372,6 +372,8 @@ def refresh_views(args) -> None:
     note = plans_mod.sync_copy(args.repo, args.pdir)
     if note:
         print(f"ℹ {note}", file=sys.stderr)
+        if args.pdir is not None and args.pdir.name != "":  # 车道表可能变了：查跨计划 agent 撞车
+            warn_agent_clashes(args.root, args.pdir.name, args.pdir)
     plan = resolve_plan(args)
     if plan is not None and plan.is_file():
         view_args = argparse.Namespace(**vars(args))
@@ -388,6 +390,24 @@ def refresh_views(args) -> None:
     else:
         print(f"ℹ 计划副本缺失（{plan}），跳过视图刷新", file=sys.stderr)
     write_index(args.root)
+    done_task = args.task if getattr(args, "cmd", None) == "done" else None
+    wake_waiting_agents(args.root, done_task)
+
+
+def wake_waiting_agents(root: Path, done_task: str | None = None) -> None:
+    """写事件后叫醒在等的 agent：登记了条件唤醒（bus_wake.py until）的查条件；
+    done 时另叫醒因此真正解锁的后继任务的车道 agent（不必等对方广播 DONE）。"""
+    bus = root / "bus"
+    conditions = bus / "wake_conditions.json"
+    has_conditions = conditions.is_file() and conditions.read_text(encoding="utf-8").strip() not in ("", "{}")
+    if not has_conditions and not (done_task and (bus / "wake_map.json").is_file()):
+        return
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve().parent / "bus_wake.py"), "--root", str(root), "check",
+         *(["--done", done_task] if done_task else [])],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def write_index(root: Path) -> None:
@@ -977,8 +997,17 @@ def cmd_plan(args) -> int:
         except ValueError:
             print(f"✗ 计划源文件须在仓库内：{args.source}", file=sys.stderr)
             return 2
+        shared = sorted({a.strip() for a in (args.share_agent or "").split(",") if a.strip()})
+        clashes = plans_mod.agent_clashes(root, name, absolute, set(shared))
+        if clashes:
+            for agent, others in clashes.items():
+                print(f"✗ 车道 agent ID {agent} 已在 active 计划 {', '.join(others)} 的车道表里", file=sys.stderr)
+            print("  一个 agent ID 对应一个会话：给新车道起新 ID；若确是同一会话兼两份活，加 "
+                  f"--share-agent {','.join(clashes)}", file=sys.stderr)
+            return 2
         plans_mod.write_meta(pdir, {"name": name, "source": str(rel), "status": "active",
-                                    "opened": now_iso(), "closed": None})
+                                    "opened": now_iso(), "closed": None,
+                                    **({"shared_agents": shared} if shared else {})})
         events_path(pdir).touch()
         plans_mod.sync_copy(repo, pdir)
         ids = plan_task_ids(pdir)
@@ -997,6 +1026,7 @@ def cmd_plan(args) -> int:
     if args.plan_cmd == "sync":
         note = plans_mod.sync_copy(repo, pdir)
         print(f"✓ {note}" if note else f"✓ {name} 副本已是最新")
+        warn_agent_clashes(root, name, pdir)
         refresh_views(args)
         return 0
     # close
@@ -1016,6 +1046,14 @@ def cmd_plan(args) -> int:
         print(f"⚠ 仍有 {len(open_ids)} 个任务未终结：{', '.join(open_ids)}——要接着做的用 "
               f"`task_state.py --plan {name} migrate <task> --to <新计划> --agent <ID>` 转过去", file=sys.stderr)
     return 0
+
+
+def warn_agent_clashes(root: Path, name: str, pdir: Path) -> None:
+    """车道表改动后（sync / 写事件自动同步）提示跨计划 agent ID 撞车；只警告，不挡状态写入。"""
+    for agent, others in plans_mod.agent_clashes(root, name, pdir / plans_mod.DOC_NAME).items():
+        print(f"⚠ 车道 agent ID {agent} 同时出现在 active 计划 {', '.join(others)} 的车道表里——"
+              f"不是同一会话就改 ID；是同一会话请在 {pdir / plans_mod.META_NAME} 的 shared_agents 里登记",
+              file=sys.stderr)
 
 
 def cmd_migrate(args) -> int:
@@ -1122,6 +1160,8 @@ def build_parser() -> argparse.ArgumentParser:
     q = plan_sub.add_parser("list", help="列出全部计划")
     q = plan_sub.add_parser("open", help="开新计划：建 plans/<name>/ 并复制计划源文件")
     q.add_argument("name"); q.add_argument("--source", required=True, help="计划源文件（仓库内，如 Doc/godot/plans/x.md）")
+    q.add_argument("--share-agent", default=None,
+                   help="逗号分隔：允许与其它 active 计划共用的车道 agent ID（同一会话兼两份活时才用）")
     q = plan_sub.add_parser("close", help="关闭计划：冻结副本与视图，列出未终结任务")
     q.add_argument("name")
     q = plan_sub.add_parser("sync", help="立即把计划源文件同步到副本并重生成视图")

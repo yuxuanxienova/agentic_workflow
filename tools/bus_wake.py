@@ -4,6 +4,10 @@
 Claude Code 会话：自动发现（~/.claude/sessions/*.json，agent ID 由对话记录推断），往其收件箱
 socket 投递消息；需项目 .claude/settings.local.json 设 crossSessionInbound=accept。
 
+Trae 会话：Trae 内装 agentic_workflow/trae_bridge 扩展后，它在 ~/.trae-cn/agentic-bridge.sock
+收消息并投进 Trae 当前 agent 会话（内部 IM 桥命令）。agent ID 默认 trae-1，可在
+<root>/bus/trae_agent.txt 改。Trae 无空闲查询，忙时消息由 Trae 自己排队，每批新消息只投一次。
+
 原理：ChatGPT App 的 Codex「SSH 远程项目」（主机指向本机 codex-local）把会话放在本机共享
 app-server daemon 里；本工具作为第二个客户端连同一个 daemon（WebSocket over unix socket），
 对空闲会话 thread/resume + turn/start 注入一轮，App 里实时可见。App「本地项目」的会话由 App
@@ -20,6 +24,8 @@ agentic_workflow/doc/setup_codex.html。
   spawn  --agent <id> --name <会话名> --text <首轮提示> [--cwd 目录]
          在 daemon 新开会话（App 的 codex-local 项目下可见）、命名、发首轮，并登记映射
   wake   --agent <id> [--text <提示>] [--force]   叫醒一次（会话忙则跳过，退出 3）
+  until  --agent <id> --task <X[,Y]> [--state done] | --clear
+         条件唤醒：等待期间只收点对点/点名/INTERRUPT，条件满足时立即叫醒（task_state 写事件触发 check）
   watch  [--interval 20] [--direct-only] [--once]
          轮询收件箱：某 agent 有游标之后的新消息且会话空闲 → 后台叫醒它读收件箱
 
@@ -43,13 +49,26 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import wake_routing  # noqa: E402
 from bus import BROADCAST, bus_dir, cursor_path, default_root, inbox_path, iter_jsonl, log_path  # noqa: E402
 
 SOCK = Path.home() / ".codex/app-server-control/app-server-control.sock"
 MAP_NAME = "wake_map.json"
 STATE_NAME = "wake_state.json"
+CLAUDE_PAUSE_NAME = "claude_wake.paused"
+# 防抖窗口：send 后先等这么久，把同一批广播合并成一次唤醒（AGENTIC_WAKE_DEBOUNCE 可覆盖）
+WAKE_DEBOUNCE = int(os.environ.get("AGENTIC_WAKE_DEBOUNCE", "90"))
+# 点对点消息（HANDOFF / REQUEST_HELP 等）多半有人在等回复：短防抖，且不被广播的长窗口挡住
+DIRECT_DEBOUNCE = int(os.environ.get("AGENTIC_WAKE_DEBOUNCE_DIRECT", "20"))
+AWAIT_MAX_WAIT = 7200
+TRAE_SOCK = Path.home() / ".trae-cn/agentic-bridge.sock"
+TRAE_AGENT_NAME = "trae_agent.txt"
+# 与 App「Full access」一致：不审批、无沙箱。spawn 时不传会落回 config.toml 默认（on-request + workspaceWrite，.git 只读）
+FULL_ACCESS = {"approvalPolicy": "never", "sandbox": "danger-full-access"}
+# turn/start 用的形式（对本轮及之后各轮生效；已加载会话改权限只能走这里）
+TURN_FULL_ACCESS = {"approvalPolicy": "never", "sandboxPolicy": {"type": "dangerFullAccess"}}  # 存在即暂停唤醒所有 Claude 会话
 DEFAULT_WAKE_TEXT = (
-    "【bus_wake 自动唤醒】你的总线收件箱有新消息（#{seqs}）。请先跑 "
+    "【bus_wake 自动唤醒】你的总线收件箱有新消息（{seqs}）。请先跑 "
     "`python3 agentic_workflow/tools/bus.py read --agent {agent} --unread`，"
     "再按 AGENTS.md 的车道规矩处理：前置满足就继续车道，仍需等待就简短说明在等什么后结束本轮。"
 )
@@ -188,21 +207,44 @@ def thread_status(server: AppServer, thread_id: str) -> str:
     return server.call("thread/read", {"threadId": thread_id})["thread"]["status"]["type"]
 
 
-def pending_seqs(root: Path, agent: str, after: int, direct_only: bool) -> list[int]:
-    """agent 游标之后、且大于 after 的消息 seq（只读，不推进 bus.py 的游标）。"""
+def pending_messages(root: Path, agent: str, after: int, direct_only: bool) -> list[dict]:
+    """agent 游标之后、且大于 after 的消息（只读，不推进 bus.py 的游标）。"""
     cursor = cursor_path(root, agent)
     since = int(cursor.read_text(encoding="utf-8").strip() or 0) if cursor.is_file() else 0
     since = max(since, after)
-    seqs = [e.get("seq", 0) for e in iter_jsonl(inbox_path(root, agent)) if e.get("seq", 0) > since]
+    found = {e.get("seq", 0): e for e in iter_jsonl(inbox_path(root, agent)) if e.get("seq", 0) > since}
     if not direct_only:
-        seqs += [e.get("seq", 0) for e in iter_jsonl(log_path(root))
-                 if e.get("to") == BROADCAST and e.get("from") != agent and e.get("seq", 0) > since]
-    return sorted(set(seqs))
+        found.update({e.get("seq", 0): e for e in iter_jsonl(log_path(root))
+                      if e.get("to") == BROADCAST and e.get("from") != agent and e.get("seq", 0) > since})
+    return [found[s] for s in sorted(found)]
+
+
+def seen_conflicts(root: Path, agent: str, before: int) -> set:
+    """游标之前已收到过的 CONFLICT（发送方, 任务）——重复的自动 CONFLICT 不再叫醒。"""
+    return {(e.get("from"), e.get("task_id")) for e in iter_jsonl(inbox_path(root, agent))
+            if e.get("type") == "CONFLICT" and e.get("seq", 0) <= before}
+
+
+def plan_wake(root: Path, agent: str, after: int, direct_only: bool) -> tuple[list[dict], str | None]:
+    """返回（本次覆盖的全部新消息, 唤醒文案）；文案为 None 表示不值得叫醒。"""
+    messages = pending_messages(root, agent, after, direct_only)
+    view = wake_routing.load_view(root)
+    conditions = wake_routing.load_conditions(root)
+    cond = conditions.get(agent)
+    if cond and wake_routing.condition_met(view, cond):
+        conditions.pop(agent, None)
+        wake_routing.save_conditions(root, conditions)
+        reason = f"你登记等待的 {'、'.join(cond.get('tasks', []))} 已 {cond.get('state', 'done')}，前置满足"
+        return messages, wake_text(root, agent, messages, view, gate=None, reason=reason)
+    if not messages:
+        return [], None
+    text = wake_text(root, agent, messages, view, gate=cond)
+    return messages, text
 
 
 def inject_turn(server: AppServer, thread_id: str, text: str) -> None:
     server.call("thread/resume", {"threadId": thread_id, "excludeTurns": True})
-    server.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": text}]})
+    server.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": text}], **TURN_FULL_ACCESS})
 
 
 @contextlib.contextmanager
@@ -260,16 +302,94 @@ def post_claude(sock_path: str, text: str) -> None:
                                  ensure_ascii=False) + "\n").encode())
 
 
+def trae_call(req: dict, timeout: float = 15) -> dict:
+    """调 Trae 桥扩展（一行 JSON 请求 → 一行 JSON 回复）。"""
+    with socket.socket(socket.AF_UNIX) as conn:
+        conn.settimeout(timeout)
+        conn.connect(str(TRAE_SOCK))
+        conn.sendall((json.dumps(req, ensure_ascii=False) + "\n").encode())
+        return json.loads(conn.makefile(encoding="utf-8").readline() or "{}")
+
+
+def trae_agent(root: Path) -> str | None:
+    """桥在线且 Trae 窗口打开的是本仓库 → 返回登记的 Trae agent ID。"""
+    if not TRAE_SOCK.exists():
+        return None
+    try:
+        info = trae_call({"op": "ping"}, timeout=3)
+    except (OSError, ValueError):
+        return None
+    if str(repo_root(root)) not in info.get("workspace", []):
+        return None
+    name_file = bus_dir(root) / TRAE_AGENT_NAME
+    return (name_file.read_text().strip() if name_file.exists() else "") or "trae-1"
+
+
 def repo_root(root: Path) -> Path:
     return root.resolve().parent
 
 
+def broadcast_audience_of(root: Path) -> set[str]:
+    """广播受众 = 车道 agent + 协调人 + wake_map 显式登记的会话；解析失败时退回只叫显式登记的。"""
+    explicit = set(load_json(bus_dir(root) / MAP_NAME))
+    try:
+        import plans as plans_mod
+        return explicit | plans_mod.broadcast_audience(root)
+    except Exception:  # noqa: BLE001
+        return explicit
+
+
 def wake_targets(root: Path) -> dict[str, tuple[str, str]]:
-    """{agent_id: ("codex", thread_id) | ("claude", socket)}；Codex 来自映射，Claude 自动发现。"""
+    """{agent_id: ("codex", thread_id) | ("claude", socket) | ("trae", "")}；Codex 来自映射，Claude/Trae 自动发现。"""
     targets = {agent: ("codex", thread) for agent, thread in load_json(bus_dir(root) / MAP_NAME).items()}
+    trae = trae_agent(root)
+    if trae:
+        targets.setdefault(trae, ("trae", ""))
+    if (bus_dir(root) / CLAUDE_PAUSE_NAME).exists():
+        return targets  # 用户暂停了 Claude 唤醒（如快到会话额度）：只叫 Codex
     for agent, meta in claude_sessions(repo_root(root)).items():
         targets.setdefault(agent, ("claude", meta["socket"]))
     return targets
+
+
+def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | None,
+              reason: str | None = None) -> str | None:
+    """唤醒文案：消息摘要直接内联（已代读，免去 bus.py read 一轮）；无相关消息返回 None。
+    agent 在多个 active 计划有车道时提醒带 --plan。"""
+    first = messages[0].get("seq", 0) if messages else 0
+    conflicts = seen_conflicts(root, agent, first - 1) if messages else set()
+    relevant, skipped = [], []
+    for msg in messages:
+        why = None if wake_routing.gated(gate, msg, agent) else wake_routing.relevance(view, agent, msg, conflicts)
+        (relevant.append((msg, why)) if why else skipped.append(msg))
+    if not relevant and not reason:
+        return None
+    head = f"【bus_wake 自动唤醒】{reason}。" if reason else "【bus_wake 自动唤醒】你有与你相关的新总线消息。"
+    text = (
+        f"{head}以下已代读（收件箱游标已推进，无需再跑 bus.py read）：\n"
+        f"{wake_routing.digest(relevant, skipped)}\n"
+        "按 AGENTS.md 车道规矩处理：前置满足就继续车道；仍需等待就跑 "
+        f"`python3 agentic_workflow/tools/bus_wake.py until --agent {agent} --task <在等的任务>` 登记条件后，"
+        "一句话说明在等什么并结束本轮（条件满足前不会再因无关广播被叫醒）。"
+    )
+    try:
+        import plans as plans_mod
+        lanes_in = plans_mod.agent_plans(root).get(agent, [])
+    except Exception:  # noqa: BLE001  计划解析失败不影响唤醒
+        lanes_in = []
+    if len(lanes_in) > 1:
+        text += f" 注意：你在 {'、'.join(lanes_in)} 都有车道，task_state.py 命令请带 --plan <计划名>，按消息标注的计划处理。"
+    return text
+
+
+def mark_delivered(root: Path, agent: str, state: dict, messages: list[dict]) -> None:
+    if messages:
+        last = max(int(m.get("seq", 0)) for m in messages)
+        state[agent] = max(int(state.get(agent, 0)), last)
+        cursor = cursor_path(root, agent)
+        cursor.parent.mkdir(parents=True, exist_ok=True)
+        cursor.write_text(str(last), encoding="utf-8")
+    save_json(bus_dir(root) / STATE_NAME, state)
 
 
 def try_wake(root: Path, agent: str, direct_only: bool = False) -> str:
@@ -281,17 +401,26 @@ def try_wake(root: Path, agent: str, direct_only: bool = False) -> str:
     kind, address = target
     with state_lock(root):
         state = load_json(bus_dir(root) / STATE_NAME)
-        seqs = pending_seqs(root, agent, int(state.get(agent, 0)), direct_only)
-        if not seqs:
+        messages, text = plan_wake(root, agent, int(state.get(agent, 0)), direct_only)
+        if text is None:
             return "nothing"
-        seq_text = ",".join(str(s) for s in seqs[-8:])
+        seq_text = ",".join(str(m.get("seq")) for m in messages[-8:]) or "条件"
+        if kind == "trae":
+            try:
+                reply = trae_call({"wait": False, "text": text})
+            except (OSError, ValueError) as exc:
+                return f"error:{exc}"
+            if not reply.get("ok"):
+                return "busy" if reply.get("busy") else f"error:{reply.get('error')}"
+            mark_delivered(root, agent, state, messages)
+            log_wake(root, agent, f"唤醒 #{seq_text}（trae）")
+            return "woken"
         if kind == "claude":
             try:
-                post_claude(address, DEFAULT_WAKE_TEXT.format(seqs=seq_text, agent=agent))
+                post_claude(address, text)
             except OSError as exc:
                 return f"error:{exc}"
-            state[agent] = seqs[-1]
-            save_json(bus_dir(root) / STATE_NAME, state)
+            mark_delivered(root, agent, state, messages)
             log_wake(root, agent, f"唤醒 #{seq_text}（claude）")
             return "woken"
         thread_id = address
@@ -299,13 +428,12 @@ def try_wake(root: Path, agent: str, direct_only: bool = False) -> str:
         try:
             if thread_status(server, thread_id) == "active":
                 return "busy"
-            inject_turn(server, thread_id, DEFAULT_WAKE_TEXT.format(seqs=seq_text, agent=agent))
+            inject_turn(server, thread_id, text)
         except RuntimeError as exc:
             return f"error:{exc}"
         finally:
             server.sock.close()
-        state[agent] = seqs[-1]
-        save_json(bus_dir(root) / STATE_NAME, state)
+        mark_delivered(root, agent, state, messages)
         log_wake(root, agent, f"唤醒 #{seq_text}")
         return "woken"
 
@@ -345,15 +473,18 @@ def cmd_list(args) -> int:
     for agent, meta in sorted(claude_sessions(repo_root(args.root)).items()):
         if agent not in mapping:
             print(f"claude  {agent:<28} pid {meta['pid']:<7} {meta.get('name', '')}  {meta.get('status', '?')}")
+    trae = trae_agent(args.root)
+    if trae and trae not in mapping:
+        print(f"trae    {trae:<28} {TRAE_SOCK}")
     return 0
 
 
 def cmd_spawn(args) -> int:
     server = AppServer()
-    thread = server.call("thread/start", {"cwd": str(Path(args.cwd).resolve())})["thread"]
+    thread = server.call("thread/start", {"cwd": str(Path(args.cwd).resolve()), **FULL_ACCESS})["thread"]
     thread_id = thread["id"]
     server.call("thread/name/set", {"threadId": thread_id, "name": args.name})
-    server.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": args.text}]})
+    server.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": args.text}], **TURN_FULL_ACCESS})
     mapping = load_json(bus_dir(args.root) / MAP_NAME)
     mapping[args.agent] = thread_id
     save_json(bus_dir(args.root) / MAP_NAME, mapping)
@@ -366,6 +497,14 @@ def cmd_spawn(args) -> int:
 def cmd_wake(args) -> int:
     mapping = load_json(bus_dir(args.root) / MAP_NAME)
     thread_id = mapping.get(args.agent)
+    if not thread_id and args.agent == trae_agent(args.root):
+        if not args.text:  # 不带 --text：按收件箱新消息叫醒（推进游标）
+            result = try_wake(args.root, args.agent)
+            print(f"{args.agent}（trae）：{result}")
+            return 0 if result in ("woken", "nothing") else 2
+        reply = trae_call({"wait": False, "text": args.text})
+        print(f"{args.agent}（trae）：{reply}")
+        return 0 if reply.get("ok") else 2
     if not thread_id:
         print(f"{args.agent} 未登记映射（先 map 或 spawn）", file=sys.stderr)
         return 2
@@ -388,9 +527,10 @@ def cmd_wake(args) -> int:
 def cmd_watch(args) -> int:
     print(f"bus_wake watch：每 {args.interval}s 检查一次（Ctrl-C 退出）", flush=True)
     while True:
+        audience = broadcast_audience_of(args.root)
         for agent in wake_targets(args.root):
             try:
-                result = try_wake(args.root, agent, args.direct_only)
+                result = try_wake(args.root, agent, args.direct_only or agent not in audience)
             except SystemExit as exc:  # daemon 暂时连不上：本轮跳过，不退出
                 result = f"error:{exc}"
             if result not in ("nothing", "busy"):
@@ -400,33 +540,103 @@ def cmd_watch(args) -> int:
         time.sleep(args.interval)
 
 
+def pending_marker(root: Path, agent: str) -> Path:
+    return bus_dir(root) / "wake_pending" / agent.replace("/", "__")
+
+
 def cmd_await(args) -> int:
-    """bus.py send 钩子起的后台进程：等对方空闲后叫醒，最多等 --max-wait 秒。"""
-    deadline = time.time() + args.max_wait
-    while time.time() < deadline:
-        try:
-            result = try_wake(args.root, args.agent)
-        except SystemExit:  # daemon 暂时连不上，当作忙，稍后重试
-            result = "busy"
-        if result != "busy":
-            return 0 if result in ("woken", "nothing", "unmapped") else 2
-        time.sleep(args.poll)
-    log_wake(args.root, args.agent, f"等待空闲超时（{args.max_wait}s），交给 watch 兜底")
-    return 3
+    """bus.py send 钩子起的后台进程：先防抖合并一批消息，再等对方空闲后叫醒，最多等 --max-wait 秒。"""
+    marker = pending_marker(args.root, args.agent)
+    try:
+        time.sleep(max(0, args.debounce))  # 窗口内后续 send 不再起新进程，消息并入这一次唤醒
+        deadline = time.time() + args.max_wait
+        while time.time() < deadline:
+            try:
+                result = try_wake(args.root, args.agent)
+            except SystemExit:  # daemon 暂时连不上，当作忙，稍后重试
+                result = "busy"
+            if result != "busy":
+                return 0 if result in ("woken", "nothing", "unmapped") else 2
+            time.sleep(args.poll)
+        log_wake(args.root, args.agent, f"等待空闲超时（{args.max_wait}s），交给 watch 兜底")
+        return 3
+    finally:
+        if args.debounce > 0:
+            with contextlib.suppress(OSError):
+                marker.unlink()
 
 
-def spawn_await(root: Path, recipient: str, sender: str) -> None:
-    """供 bus.py send 调用：给已登记的收件人（广播=除发送者外全部）起脱离的后台等待进程。"""
+def spawn_await(root: Path, recipient: str, sender: str, message_type: str = "") -> None:
+    """供 bus.py send 调用：给已登记的收件人（广播=受众里除发送者外）起脱离的后台等待进程。
+    防抖：广播 90s，窗口内该收件人已有等待进程就不再起；点对点 20s 且单独起；INTERRUPT 立即叫。
+    是否真叫醒由 try_wake 按路由规则决定（与其无关的广播不会叫醒）。"""
     known = wake_targets(root)
-    targets = [a for a in known if a != sender] if recipient == BROADCAST else [recipient]
+    if recipient == BROADCAST:
+        audience = broadcast_audience_of(root)
+        targets = [a for a in known if a != sender and a in audience]
+    else:
+        targets = [recipient]
+    urgent = message_type == "INTERRUPT"
+    direct = recipient != BROADCAST
+    debounce = 0 if urgent else DIRECT_DEBOUNCE if direct else WAKE_DEBOUNCE
     for agent in targets:
         if agent not in known:
             continue
+        if not urgent and not direct:
+            marker = pending_marker(root, agent)
+            with contextlib.suppress(OSError):
+                if marker.is_file() and time.time() - marker.stat().st_mtime < debounce + AWAIT_MAX_WAIT:
+                    continue
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(str(os.getpid()), encoding="utf-8")
         subprocess.Popen(
-            [sys.executable, __file__, "--root", str(root), "await", "--agent", agent],
+            [sys.executable, __file__, "--root", str(root), "await", "--agent", agent, "--debounce", str(debounce)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+
+
+def cmd_until(args) -> int:
+    """登记 / 清除条件唤醒：在等的任务全部到达目标状态前，只收点对点、点名与 INTERRUPT。"""
+    conditions = wake_routing.load_conditions(args.root)
+    if args.clear:
+        conditions.pop(args.agent, None)
+        wake_routing.save_conditions(args.root, conditions)
+        print(f"✓ 已清除 {args.agent} 的条件唤醒")
+        return 0
+    tasks = [t.strip() for t in (args.task or "").split(",") if t.strip()]
+    if not tasks:
+        print("需要 --task <任务[,任务…]> 或 --clear", file=sys.stderr)
+        return 2
+    conditions[args.agent] = {"tasks": tasks, "state": args.state, "since": time.strftime("%Y-%m-%d %H:%M:%S")}
+    wake_routing.save_conditions(args.root, conditions)
+    print(f"✓ {args.agent} 等待 {'、'.join(tasks)} → {args.state}；满足前无关广播不叫醒你")
+    return 0
+
+
+def cmd_check(args) -> int:
+    """task_state 写事件后的钩子：给条件已满足的 agent 立即叫醒（会话忙则起后台等待）。"""
+    view = wake_routing.load_view(args.root)
+    conditions = wake_routing.load_conditions(args.root)
+    if args.done and view is not None:  # 刚 done 的任务真正解锁了谁：给其车道 agent 补一条已满足的条件
+        known = wake_targets(args.root)
+        for task in sorted(view.succs.get(args.done, ())):
+            owner = view.owner.get(task)
+            if owner in known and view.state(task) in ("pending", "claimed", "blocked") and view.unlocked(task):
+                conditions.setdefault(owner, {"tasks": [args.done], "state": "done", "since": "auto"})
+        wake_routing.save_conditions(args.root, conditions)
+    for agent, cond in conditions.items():
+        if not wake_routing.condition_met(view, cond):
+            continue
+        result = try_wake(args.root, agent)
+        if result == "busy":
+            subprocess.Popen(
+                [sys.executable, __file__, "--root", str(args.root), "await", "--agent", agent, "--debounce", "0"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        print(f"{agent}：{result}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -465,8 +675,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("await", help="（send 钩子内部用）等会话空闲后叫醒")
     p.add_argument("--agent", required=True)
     p.add_argument("--poll", type=int, default=30, help="忙时重查间隔秒（默认 30）")
-    p.add_argument("--max-wait", type=int, default=7200, help="最长等待秒（默认 7200）")
+    p.add_argument("--max-wait", type=int, default=AWAIT_MAX_WAIT, help=f"最长等待秒（默认 {AWAIT_MAX_WAIT}）")
+    p.add_argument("--debounce", type=int, default=0, help="先等这么多秒合并后续消息（默认 0）")
     p.set_defaults(func=cmd_await)
+
+    p = sub.add_parser("until", help="条件唤醒：等某些任务到达状态前，不因无关广播被叫醒")
+    p.add_argument("--agent", required=True)
+    p.add_argument("--task", default=None, help="在等的任务，逗号分隔")
+    p.add_argument("--state", default="done", help="目标状态（默认 done）")
+    p.add_argument("--clear", action="store_true", help="清除条件")
+    p.set_defaults(func=cmd_until)
+
+    p = sub.add_parser("check", help="（task_state 钩子内部用）叫醒条件已满足的 agent")
+    p.add_argument("--done", default=None, help="刚 done 的任务：顺带叫醒因它解锁的后继车道 agent")
+    p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("watch", help="轮询收件箱并自动叫醒（兜底）")
     p.add_argument("--interval", type=int, default=20, help="轮询间隔秒（默认 20）")

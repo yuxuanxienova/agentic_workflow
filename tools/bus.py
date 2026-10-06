@@ -154,8 +154,9 @@ def fmt_msg(entry: dict) -> str:
     """把一条消息格式化为单行可读文本。"""
     refs = ",".join(entry.get("refs") or [])
     refs_part = f" refs=[{refs}]" if refs else ""
+    plan_part = f"[{entry['plan']}] " if entry.get("plan") else ""
     return (
-        f"#{entry.get('seq'):<4} {entry.get('ts', '-'):<20} "
+        f"{plan_part}#{entry.get('seq'):<4} {entry.get('ts', '-'):<20} "
         f"{entry.get('from', '-'):<12}→{entry.get('to', '-'):<12} "
         f"[{entry.get('type', '-'):<12}] task={entry.get('task_id') or '-':<10} "
         f"{entry.get('body') or ''}{refs_part}"
@@ -186,8 +187,9 @@ def cmd_send(args) -> int:
             "body": args.body or "",
             "refs": refs,
         }
-        if getattr(args, "plan", None):
-            entry["plan"] = args.plan
+        plan = getattr(args, "plan", None) or infer_plan(args.root, args.task)
+        if plan:
+            entry["plan"] = plan
         append_jsonl(log_path(args.root), entry)
         if args.recipient != BROADCAST:
             append_jsonl(inbox_path(args.root, args.recipient), entry)
@@ -195,19 +197,32 @@ def cmd_send(args) -> int:
         print(f"✓ 已发送 #{entry['seq']} {message_type} {args.sender}→{args.recipient}（投递收件箱 + 事件流）")
     else:
         print(f"✓ 已广播 #{entry['seq']} {message_type} {args.sender}→*（总日志；所有人 read 时可见）")
-    wake_recipients(args.root, args.recipient, args.sender)
+    wake_recipients(args.root, args.recipient, args.sender, message_type)
     return 0
 
 
-def wake_recipients(root: Path, recipient: str, sender: str) -> None:
+def wake_recipients(root: Path, recipient: str, sender: str, message_type: str = "") -> None:
     """收件人若登记在 bus_wake 映射里（Codex daemon 会话），后台等它空闲后叫醒；失败不影响发送。"""
     if not (bus_dir(root) / "wake_map.json").is_file():
         return
     try:
         from bus_wake import spawn_await
-        spawn_await(root, recipient, sender)
+        spawn_await(root, recipient, sender, message_type)
     except Exception as exc:  # noqa: BLE001  唤醒是增强，不能让 send 失败
         print(f"（唤醒钩子未生效：{exc}）", file=sys.stderr)
+
+
+def infer_plan(root: Path, task: str | None) -> str | None:
+    """没给 --plan 时按 --task 在 active 计划里唯一匹配补 plan 标签；推断不出就不打。"""
+    if not task:
+        return None
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import plans as plans_mod
+        from task_state import plan_task_ids
+        return plans_mod.task_plan(root, task, plan_task_ids)
+    except Exception:  # noqa: BLE001  标签是增强，不能让 send 失败
+        return None
 
 
 def cmd_read(args) -> int:
