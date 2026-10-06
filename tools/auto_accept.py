@@ -37,9 +37,14 @@ def commit_files(repo: Path, sha: str) -> list[str] | None:
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+def clean_spec(spec: str) -> str:
+    """计划单元格里常带注释（`a.gd`（HOT 接线 …））：只取路径部分。"""
+    return re.split(r"[`（(\s]", spec.strip().strip("`"), maxsplit=1)[0]
+
+
 def planned_hit(path: str, planned: list[str], spec_hits_path) -> bool:
     base = path[:-4] if path.endswith(".uid") else path
-    return any(spec_hits_path(spec, base) for spec in planned)
+    return any(spec_hits_path(clean_spec(spec), base) for spec in planned if clean_spec(spec))
 
 
 def check(repo: Path, note: str, planned: list[str], spec_hits_path) -> tuple[list[str], list[str]]:

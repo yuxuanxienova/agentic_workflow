@@ -727,10 +727,14 @@ def cmd_packet(args) -> int:
         print(f"机械检查提示：{'；'.join(last['lint'])}")
     planned = spec.get("files", [])
     budget = args.max_lines
-    for sha in dict.fromkeys(auto_accept.SHA_RE.findall(last.get("note", ""))):
-        files = auto_accept.commit_files(args.repo, sha)
-        if files is None or not any(auto_accept.planned_hit(f, planned, spec_hits_path) for f in files):
-            continue
+    resolved = [(sha, auto_accept.commit_files(args.repo, sha))
+                for sha in dict.fromkeys(auto_accept.SHA_RE.findall(last.get("note", "")))]
+    resolved = [(sha, files) for sha, files in resolved if files is not None]
+    own = [(sha, files) for sha, files in resolved
+           if any(auto_accept.planned_hit(f, planned, spec_hits_path) for f in files)]
+    if resolved and not own:
+        print("（备注里的提交都没改登记文件——多为热点文件集成提交，全部附上）")
+    for sha, files in own or resolved:
         show = auto_accept.git(args.repo, "show", "--stat", "--patch", "--format=## %h %s", sha).stdout.splitlines()
         print("\n".join(show[:budget]))
         if len(show) > budget:
