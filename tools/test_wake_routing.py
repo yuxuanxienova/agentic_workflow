@@ -67,7 +67,7 @@ class WakeRoutingTest(unittest.TestCase):
         view = self.view()
         self.assertIsNone(wr.relevance(view, B, msg))  # T2-2 还在等 T3-1：未真正解锁
         self.assertIsNone(wr.relevance(view, C, msg))
-        self.assertEqual(wr.relevance(view, COORD, msg), wr.DEFER)  # 协调人：进验收队列
+        self.assertIsNone(wr.relevance(view, COORD, msg))  # 协调人：验收归验收 agent
         self.set_states(T1_1="done", T2_1="done", T3_1="done")
         self.assertIn("T2-2", wr.relevance(self.view(), B, bcast(2, "DONE", C, "T3-1")))
 
@@ -128,28 +128,30 @@ class WakeRoutingTest(unittest.TestCase):
         self.assertEqual(wr.load_conditions(self.root), {})
 
 
-    # ---- 1a / 1b / 1e：协调人验收队列 ----
+    # ---- 协调人不再被 DONE 叫醒；验收队列 ----
 
-    def test_coordinator_skips_auto_passed_done_and_defers_others(self):
-        self.set_states(auto="pass", T1_1="done")
+    def test_coordinator_ignores_done_but_gets_help(self):
         view = self.view()
         self.assertIsNone(wr.relevance(view, COORD, bcast(1, "DONE", A, "T1-1")))
-        self.set_states(auto="fail", T1_1="done")
-        self.assertEqual(wr.relevance(self.view(), COORD, {"seq": 2, "from": A, "to": COORD, "type": "DONE",
-                                                            "task_id": "T1-1"}), wr.DEFER)
-        self.assertEqual(wr.relevance(self.view(), COORD, bcast(3, "BLOCKED", B, "T2-2")), "协调人")
+        self.assertIsNone(wr.relevance(view, COORD, {"seq": 2, "from": A, "to": COORD, "type": "DONE", "task_id": "T1-1"}))
+        self.assertEqual(wr.relevance(view, COORD, {"seq": 3, "from": "claude-endlessspace-review", "to": COORD,
+                                                     "type": "REQUEST_HELP", "task_id": "T1-1"}), "点对点")
+        self.assertEqual(wr.relevance(view, A, {"seq": 4, "from": "claude-endlessspace-review", "to": A,
+                                                 "type": "REJECT", "task_id": "T1-1"}), "点对点")
 
-    def test_accept_queue_batches_until_three_or_stale(self):
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        done = [dict(bcast(i, "DONE", A, f"T{i}-1"), ts=now) for i in (1, 2)]
-        self.assertIsNone(bus_wake.wake_text(self.root, COORD, done, self.view(), gate=None))
-        third = dict(bcast(3, "DONE", B, "T3-1"), ts=now)
-        text = bus_wake.wake_text(self.root, COORD, done + [third], self.view(), gate=None)
-        self.assertIn("验收队列 3 条", text)
-        self.assertIn("task_state.py packet", text)
-        stale = dict(bcast(4, "DONE", A, "T1-2"), ts="2020-01-01T00:00:00+00:00")
-        self.assertIn("验收队列 1 条", bus_wake.wake_text(self.root, COORD, [stale], self.view(), gate=None))
+    def test_review_queue_batches_by_count_or_age(self):
+        import review_runner as rr
+        rr.enqueue(self.root, "p", "T1-1", A)
+        rr.enqueue(self.root, "p", "T1-1", A)  # 重新 done 不重复排队
+        rr.enqueue(self.root, "p", "T2-1", B)
+        self.assertEqual(len(rr.load_queue(self.root)), 2)
+        self.assertFalse(rr.due(self.root))
+        rr.enqueue(self.root, "p", "T3-1", C)
+        self.assertTrue(rr.due(self.root))
+        items = rr.load_queue(self.root)[:1]
+        items[0]["ts"] -= rr.MAX_WAIT + 1
+        rr.save_queue(self.root, items)
+        self.assertTrue(rr.due(self.root))
 
     # ---- 2b：车道收工退场 ----
 

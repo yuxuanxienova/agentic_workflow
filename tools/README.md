@@ -139,11 +139,15 @@ plan5 实测：Codex 车道 205 次唤醒里 184 次空转，每次空转约 24 
 
 plan5 实测协调人一个会话占全部 token 的 36%（文献给的编排开销阈值约 15%）；13 个 agent 实际平均并行度 1.2×。
 
-- **1a 自动验收**：`task_state done` 按备注核对等级 / 本任务提交 / 改动范围（规则见 `auto_accept.py` 头注释）。
-  事件里记 `auto: pass|fail` 与原因；fail 自动给协调人发 DONE（进验收队列）。plan5 回测通过率 46/68。
-- **1b 攒批 + 1e 协调人路由**：协调人的 DONE 走验收队列，`wake_routing.ACCEPT_BATCH`（3）条或 `ACCEPT_MAX_WAIT`（20 分钟）
-  才叫醒；auto pass 的直接略过。plan5 #850 后回放：协调人唤醒 149 → 55 次。
-- **1c 干净上下文验收**：`task_state.py packet <任务>` 打印规格 + 备注 + 本任务提交 diff（截断），交给验收子 agent。
+- **验收 agent（`review_runner.py`）**：`task_state done` → 进 `bus/review_queue.json`；`watch` 每轮看到队列 ≥ 3 条或最早等满
+  20 分钟，就后台起 `claude -p --model claude-sonnet-5-5 --effort low --json-schema …`（全新上下文；只读 + git，可在临时
+  worktree 跑测试，禁 Edit/Write），材料是每个任务的 `task_state packet` + AGENTS.md 验收章节。结论经
+  `task_state review` 写回：pass → ACCEPT 给车道；reject → done 退回 active + REJECT 给车道；unsure → REQUEST_HELP 给协调人。
+  失败整批回队列，连续 2 次转协调人。每批耗时 / 费用记 `bus/metrics/reviews.jsonl`。`review_runner.py status | run --force | trial`。
+  plan5 真实任务试跑：3 个任务一批约 17 s、$0.22。纯文书问题（计划登记遗漏等）判 pass 并注明，不打回。
+- **done 当场机械检查（`auto_accept.py`）**：等级 / 本任务提交 / 改动范围，只提示车道当场补、记进事件 `lint`，不判验收。
+- **协调人路由**：DONE 一律不叫醒协调人（验收归验收 agent），只收验收存疑的 REQUEST_HELP。
+- **干净上下文材料包**：`task_state.py packet <任务>` 打印规格 + 备注 + 本任务提交 diff（截断），验收 agent 与人工复核共用。
 - **1d 换会话**：`token_usage.py` 账本记录每轮上下文大小（`ctx`）；协调人超过 `ROTATE_CTX`（150k）时唤醒文案提示交接换会话，
   报表「当前上下文」列打 ⚠。
 - **2a 建议 agent 数 / 2c 关键路径**：`check_file_ownership.py --plan <源文件> --lanes --analyze` 打印硬约束图（同步点 + 文件链）

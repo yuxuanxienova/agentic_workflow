@@ -12,8 +12,8 @@
 - 广播 CLAIM / RELEASE / ACCEPT / CONFLICT：不叫醒（只落日志，下次自然 read 时看到）。
 - 广播 INTERRUPT / PROPOSE / HANDOFF 或无法解析任务：叫醒协调人与车道未做完的 agent。
 - 车道已全部 done 的 agent：只收点对点和点名。
-- 协调人（1e）：DONE 不逐条叫醒——自动验收 pass 的略过，其余进验收队列，攒满 ACCEPT_BATCH 条
-  或最早一条等满 ACCEPT_MAX_WAIT 才叫醒（1b）；其余非静默广播与点对点照常。
+- 协调人：DONE 一律不叫醒——验收由 review_runner（验收 agent）攒批做，存疑才 REQUEST_HELP 给协调人；
+  其余非静默广播与点对点照常。
 
 条件唤醒（wake_conditions.json）：agent 用 `bus_wake.py until --task X` 登记在等 X，
 登记期间只收点对点/点名/INTERRUPT；X 进入目标状态时守护进程直接叫醒它并清掉条件。
@@ -46,7 +46,6 @@ class PlanView:
         self.states: dict[str, str] = {}
         self.coords: set[str] = set()
         self.agent_tasks: dict[str, list[str]] = {}
-        self.auto: dict[str, str] = {}           # 任务 → 最近一次 done 的自动验收结论（pass / fail）
         for _, pdir, _ in plans_mod.active_plans(root):
             doc = pdir / plans_mod.DOC_NAME
             if not doc.is_file():
@@ -62,12 +61,8 @@ class PlanView:
                 for b in before:
                     self.succs.setdefault(b, set()).add(task)
             self.coords |= set(plans_mod.COORD_RE.findall(doc.read_text(encoding="utf-8")))
-            events = list(iter_jsonl(pdir / EVENTS_NAME))
-            states, _, _ = reduce_states(events)
+            states, _, _ = reduce_states(list(iter_jsonl(pdir / EVENTS_NAME)))
             self.states.update(states)
-            for event in events:
-                if event.get("to") == "done" and event.get("task"):
-                    self.auto[event["task"]] = event.get("auto", "")
 
     def lane_finished(self, agent: str) -> bool:
         tasks = self.agent_tasks.get(agent)
@@ -88,11 +83,6 @@ def load_view(root: Path) -> PlanView | None:
         return None
 
 
-DEFER = "待验收"
-ACCEPT_BATCH = 3                 # 1b：协调人验收队列攒满几条叫醒一次
-ACCEPT_MAX_WAIT = 20 * 60        # 1b：最早一条最多等多久（秒）
-
-
 def msg_tasks(msg: dict) -> list[str]:
     found = [msg["task_id"]] if msg.get("task_id") else []
     return found + [t for t in TASK_TOKEN.findall(msg.get("body") or "") if t not in found]
@@ -101,14 +91,8 @@ def msg_tasks(msg: dict) -> list[str]:
 def relevance(view: PlanView | None, agent: str, msg: dict, seen_conflicts: set | None = None) -> str | None:
     """相关就返回一句原因（写进唤醒摘要），不相关返回 None。"""
     mtype = msg.get("type")
-    if view is not None and agent in view.coords and mtype == "DONE" and msg.get("from") != agent:
-        # 1a/1e：协调人不再被逐条 DONE 叫醒——自动验收通过的直接略过，其余进验收队列（1b 攒批）
-        tasks = msg_tasks(msg)
-        if tasks and all(view.auto.get(t) == "pass" for t in tasks):
-            return None
-        if msg.get("to") in (agent, "*"):
-            return DEFER
-        return None
+    if view is not None and agent in view.coords and mtype == "DONE":
+        return None  # 验收归验收 agent（review_runner）：协调人只收它转来的 REQUEST_HELP
     if msg.get("to") == agent:
         if mtype == "ACCEPT":
             return None  # 回执：下次醒来时随摘要看到，不单独叫醒

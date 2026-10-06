@@ -342,10 +342,10 @@ def append_event(root: Path, **fields) -> dict:
         }
         if fields.get("claim"):
             entry["claim"] = True
-        if fields.get("auto"):  # 1a 自动验收结论（pass / fail + 原因）
-            entry["auto"] = fields["auto"]
-            if fields.get("auto_reasons"):
-                entry["auto_reasons"] = fields["auto_reasons"]
+        if fields.get("lint"):  # done 当场机械检查发现的问题（只提示）
+            entry["lint"] = fields["lint"]
+        if fields.get("review"):  # 验收 agent 结论：pass / reject / unsure
+            entry["review"] = fields["review"]
         append_jsonl(events_path(root), entry)
     return entry
 
@@ -548,37 +548,45 @@ def notify_conflicts(args, task: str, warnings: list[tuple[str, str]]) -> None:
         print(f"  → 已向 {other_agent} 发送 CONFLICT（bus.py read --agent {other_agent} --unread）", file=sys.stderr)
 
 
-def auto_accept_result(args) -> tuple[str, list[str]] | None:
-    """1a 自动验收：pass → 协调人不看；fail → 原因随事件落库并进协调人验收队列。检查本身出错不影响 done。"""
+def done_lint(args) -> list[str]:
+    """done 当场的机械检查（只提示、不判验收）：等级 / 本任务提交 / 改动范围。检查本身出错就不提示。"""
     try:
         import auto_accept
         planned = parse_plan(args.plan).get(args.task, {}).get("files", []) if args.plan else []
         reasons, hints = auto_accept.check(args.repo, note_text(args), planned, spec_hits_path)
-    except Exception as error:  # noqa: BLE001
-        return "fail", [f"自动验收出错：{error}"]
+    except Exception:  # noqa: BLE001
+        return []
     for hint in hints:
         print(f"ℹ {hint}", file=sys.stderr)
-    return ("fail", reasons) if reasons else ("pass", [])
+    return reasons
 
 
-def report_auto_accept(args, auto: tuple[str, list[str]]) -> None:
-    verdict, reasons = auto
-    if verdict == "pass":
-        print("✓ 自动验收通过（等级 / 提交 / 改动范围均符合计划）：协调人不需要看，不必再发 DONE 给协调人")
-        return
-    print("⚠ 自动验收未过，已进协调人验收队列：" + "；".join(reasons), file=sys.stderr)
-    coords = sorted(set(plans_mod.COORD_RE.findall((args.pdir / plans_mod.DOC_NAME).read_text(encoding="utf-8"))))
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import bus
-    for coord in coords:
-        if coord == args.agent or bus.bad_agent_id(coord):
-            continue
-        message = argparse.Namespace(
-            root=args.root, sender=args.agent, recipient=coord, type="DONE", task=args.task,
-            body=f"[自动验收未过] {'；'.join(reasons)}。备注：{note_text(args)}", refs=args.task, plan=args.plan_name,
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            bus.cmd_send(message)
+def after_done(args, lint: list[str]) -> None:
+    """done 后：提示机械检查问题（请车道当场补），并把任务放进验收队列（review_runner 攒批验收）。"""
+    if lint:
+        print("⚠ 备注/提交有问题，请当场补好（revoke 后修正再 done，或补提交后重新 done）：" + "；".join(lint),
+              file=sys.stderr)
+    try:
+        import review_runner
+        review_runner.enqueue(args.root, args.plan_name, args.task, args.agent)
+        print("✓ 已进验收队列：验收 agent 攒批验收，结论以 ACCEPT / REJECT 发给你；不必再给协调人发 DONE")
+    except Exception as error:  # noqa: BLE001  验收队列是增强，不连累 done
+        print(f"ℹ 验收队列登记失败：{error}", file=sys.stderr)
+
+
+def cmd_review(args) -> int:
+    """review：验收 agent 写结论。pass / unsure 记一条同状态事件；reject 把 done 退回 active。"""
+    states, _, _ = reduce_states(load_events(args.pdir))
+    current = states.get(args.task, "pending")
+    if current != "done":
+        print(f"✗ {args.task} 当前为 {current}，不是 done，跳过验收结论", file=sys.stderr)
+        return 2
+    target = "active" if args.verdict == "reject" else "done"
+    label = {"pass": "验收通过", "reject": "验收打回", "unsure": "验收存疑（转协调人）"}[args.verdict]
+    entry = append_event(args.pdir, task=args.task, **{"from": current, "to": target}, agent=args.agent,
+                         note=f"{label}：{note_text(args)}", review=args.verdict)
+    print(f"✓ {args.task}: {label}（{current} → {target}）  #{entry['seq']}")
+    return 0
 
 
 def cmd_transition(args, kind: str) -> int:
@@ -599,7 +607,7 @@ def cmd_transition(args, kind: str) -> int:
         )
         return 2
 
-    auto = auto_accept_result(args) if kind == "done" else None
+    lint = done_lint(args) if kind == "done" else []
     entry = append_event(
         root,
         task=args.task,
@@ -607,11 +615,11 @@ def cmd_transition(args, kind: str) -> int:
         agent=args.agent,
         note=note_text(args),
         claim=True if kind == "claim" else None,
-        **({"auto": auto[0], "auto_reasons": auto[1]} if auto else {}),
+        **({"lint": lint} if lint else {}),
     )
     print(f"✓ {args.task}: {current} → {target}{'（接管）' if takeover else ''}  #{entry['seq']}  agent={args.agent}")
-    if auto:
-        report_auto_accept(args, auto)
+    if kind == "done":
+        after_done(args, lint)
     if kind in ("claim", "start"):
         warnings = claim_warnings(args, args.task, states, current_holders(events))
         if warnings:
@@ -715,8 +723,8 @@ def cmd_packet(args) -> int:
     print(f"规格：{spec.get('title', '（计划里找不到该任务）')}")
     print(f"登记改动文件：{'；'.join(spec.get('files', [])) or '-'}")
     print(f"done 备注（{last.get('agent', '-')} {last.get('ts', '-')}）：{last.get('note', '（尚未 done）')}")
-    if last.get("auto"):
-        print(f"自动验收：{last['auto']}" + (f"——{'；'.join(last.get('auto_reasons', []))}" if last.get("auto_reasons") else ""))
+    if last.get("lint"):
+        print(f"机械检查提示：{'；'.join(last['lint'])}")
     planned = spec.get("files", [])
     budget = args.max_lines
     for sha in dict.fromkeys(auto_accept.SHA_RE.findall(last.get("note", ""))):
@@ -1155,7 +1163,7 @@ def cmd_migrate(args) -> int:
 # ---------------------------------------------------------------- CLI
 
 
-WRITE_COMMANDS = {"claim", "start", "submit", "done", "block", "fail", "unblock", "revoke", "seed"}
+WRITE_COMMANDS = {"claim", "start", "submit", "done", "block", "fail", "unblock", "revoke", "seed", "review"}
 TASK_COMMANDS = WRITE_COMMANDS - {"seed"} | {"status", "migrate", "packet"}
 
 
@@ -1240,6 +1248,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="查看单任务状态与备注")
     add_task(p)
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("review", help="（验收 agent 用）写验收结论：pass / reject（退回 active）/ unsure")
+    add_task(p)
+    p.add_argument("--agent", required=True)
+    p.add_argument("--verdict", required=True, choices=("pass", "reject", "unsure"))
+    p.add_argument("--note", default="", help="理由")
+    p.set_defaults(func=cmd_review)
 
     p = sub.add_parser("packet", help="（1c）打印给验收子 agent 的材料包：规格 + 备注 + 本任务提交 diff")
     add_task(p)

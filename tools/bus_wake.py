@@ -363,13 +363,8 @@ def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | N
     for msg in messages:
         why = None if wake_routing.gated(gate, msg, agent) else wake_routing.relevance(view, agent, msg, conflicts)
         (relevant.append((msg, why)) if why else skipped.append(msg))
-    deferred = [m for m, why in relevant if why == wake_routing.DEFER]
-    urgent = [m for m, why in relevant if why != wake_routing.DEFER]
-    if not urgent and not reason:
-        oldest = min((msg_age(m) for m in deferred), default=0)
-        if len(deferred) < wake_routing.ACCEPT_BATCH and oldest < wake_routing.ACCEPT_MAX_WAIT:
-            return None  # 1b：验收队列未攒满且不急，等下一批
-        reason = f"验收队列 {len(deferred)} 条（自动验收未过或无记录的 DONE）"
+    if not relevant and not reason:
+        return None
     head = f"【bus_wake 自动唤醒】{reason}。" if reason else "【bus_wake 自动唤醒】你有与你相关的新总线消息。"
     text = (
         f"{head}以下已代读（收件箱游标已推进，无需再跑 bus.py read）：\n"
@@ -388,10 +383,6 @@ def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | N
             text += (f"\n上下文（1d）：你的会话上下文已约 {ctx // 1000}k token，每次调用都在重放它。处理完本轮后把"
                      "未结事项写进 Doc/godot/handoffs/<日期>-coord-handoff.md，然后请用户开新会话接任"
                      "（沿用同一协调人 ID，新会话先读交接文件）。")
-    if deferred:
-        text += ("\n验收（1c）：每个待验收任务派一个上下文干净的子 agent（可用 Sonnet），只给它 "
-                 "`python3 agentic_workflow/tools/task_state.py packet <任务>` 的输出，让它回一行结论"
-                 "（通过 / 打回 + 理由），你只汇总结论、不自己读 diff。")
     try:
         import plans as plans_mod
         lanes_in = plans_mod.agent_plans(root).get(agent, [])
@@ -400,14 +391,6 @@ def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | N
     if len(lanes_in) > 1:
         text += f" 注意：你在 {'、'.join(lanes_in)} 都有车道，task_state.py 命令请带 --plan <计划名>，按消息标注的计划处理。"
     return text
-
-
-def msg_age(msg: dict) -> float:
-    from datetime import datetime
-    try:
-        return time.time() - datetime.fromisoformat(str(msg.get("ts")).replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0.0
 
 
 def mark_delivered(root: Path, agent: str, state: dict, messages: list[dict]) -> None:
@@ -589,6 +572,13 @@ def cmd_watch(args) -> int:
             retire_finished(args.root)
         except Exception as exc:  # noqa: BLE001  退场通知是增强，不能拖垮 watch
             print(f"{time.strftime('%H:%M:%S')} 退场检查出错：{exc}", flush=True)
+        try:
+            import review_runner
+            if review_runner.due(args.root):
+                review_runner.spawn(args.root)
+                print(f"{time.strftime('%H:%M:%S')} 启动验收 agent", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"{time.strftime('%H:%M:%S')} 验收检查出错：{exc}", flush=True)
         audience = broadcast_audience_of(args.root)
         for agent in wake_targets(args.root):
             try:
