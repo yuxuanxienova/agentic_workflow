@@ -135,6 +135,22 @@ plan5 实测：Codex 车道 205 次唤醒里 184 次空转，每次空转约 24 
   agent 不用再跑 `bus.py read`。
 - 计划解析失败时退回「全部相关」，宁多叫不漏叫。测试：`python3 -m unittest tools/test_wake_routing.py`。
 
+#### 协调人减负与车道规模（`auto_accept.py`、`lanes.py --analyze`、`task_state.py packet`）
+
+plan5 实测协调人一个会话占全部 token 的 36%（文献给的编排开销阈值约 15%）；13 个 agent 实际平均并行度 1.2×。
+
+- **1a 自动验收**：`task_state done` 按备注核对等级 / 本任务提交 / 改动范围（规则见 `auto_accept.py` 头注释）。
+  事件里记 `auto: pass|fail` 与原因；fail 自动给协调人发 DONE（进验收队列）。plan5 回测通过率 46/68。
+- **1b 攒批 + 1e 协调人路由**：协调人的 DONE 走验收队列，`wake_routing.ACCEPT_BATCH`（3）条或 `ACCEPT_MAX_WAIT`（20 分钟）
+  才叫醒；auto pass 的直接略过。plan5 #850 后回放：协调人唤醒 149 → 55 次。
+- **1c 干净上下文验收**：`task_state.py packet <任务>` 打印规格 + 备注 + 本任务提交 diff（截断），交给验收子 agent。
+- **1d 换会话**：`token_usage.py` 账本记录每轮上下文大小（`ctx`）；协调人超过 `ROTATE_CTX`（150k）时唤醒文案提示交接换会话，
+  报表「当前上下文」列打 ⚠。
+- **2a 建议 agent 数 / 2c 关键路径**：`check_file_ownership.py --plan <源文件> --lanes --analyze` 打印硬约束图（同步点 + 文件链）
+  每波宽度、建议 agent 数（P75）、尾部串行任务（建议并成收尾车道），以及车道图关键路径每条边的成因
+  （同步点 / 共享文件 / 仅车道顺序）和拉长关键路径的文件。不带 `--analyze` 时车道数超标只打一行提示。
+- **2b 退场**：`watch` 每轮检查，车道全 done 的 agent 收到一次「车道收工」通知（记 `bus/retired.json`），之后只收点对点。
+
 #### Trae 通道
 
 Trae CN 没有公开 API；`trae_bridge/` 是一个本地扩展，在 `~/.trae-cn/agentic-bridge.sock` 收一行 JSON，

@@ -74,7 +74,7 @@ def new_turn(agent, vendor, session, start, prompt) -> dict:
     return {"agent": agent, "vendor": vendor, "session": session, "start": start, "end": start,
             "trigger": trigger, "seqs": [int(s) for s in re.findall(r"#(\d+)", prompt)][:20],
             "prompt": prompt[:160], "calls": 0, "input": 0, "cached": 0, "cache_write": 0,
-            "output": 0, "coord_input": 0, "action": False}
+            "output": 0, "coord_input": 0, "action": False, "ctx": 0}
 
 
 def guess_agent(text: str, default: str) -> str:
@@ -126,6 +126,7 @@ def codex_turns(repo: Path, since: float, names: dict[str, str]) -> list[dict]:
                 cur["input"] += u.get("input_tokens", 0)
                 cur["cached"] += u.get("cached_input_tokens", 0)
                 cur["output"] += u.get("output_tokens", 0)
+                cur["ctx"] = u.get("input_tokens", 0)  # 本轮最后一次调用的上下文大小
                 if pending_coord:  # 发出协调命令的那次调用
                     cur["coord_input"] += u.get("input_tokens", 0) - u.get("cached_input_tokens", 0) \
                         + W_CACHED * u.get("cached_input_tokens", 0)
@@ -184,6 +185,7 @@ def claude_turns(repo: Path, since: float) -> list[dict]:
                 cur["cached"] += read
                 cur["cache_write"] += write
                 cur["output"] += u.get("output_tokens", 0)
+                cur["ctx"] = fresh + read + write
                 call_cost = fresh + W_CACHED * read + W_CACHE_WRITE * write
                 if COORD_RE.search(blob):
                     cur["coord_input"] += call_cost
@@ -306,15 +308,29 @@ def report(root: Path, turns: list[dict], plan: str | None, since: float) -> str
               f"- 唤醒延迟（消息发出→被唤醒轮开始）：中位 {pct(lat, .5):.0f}s，P90 {pct(lat, .9):.0f}s（n={len(lat)}）",
               f"- 干活唤醒轮时长：中位 {pct([t['end'] - t['start'] for t in by_kind.get('wake_work', [])], .5) / 60:.1f} min；"
               f"人工轮时长中位 {pct([t['end'] - t['start'] for t in by_kind.get('human', [])], .5) / 60:.1f} min"]
-    lines += ["", "## 按 agent", "", "| agent | 厂商 | 轮数 | 空转唤醒 | IET | 占比 |", "|---|---|---|---|---|---|"]
+    lines += ["", "## 按 agent", "", "| agent | 厂商 | 轮数 | 空转唤醒 | IET | 占比 | 当前上下文 |", "|---|---|---|---|---|---|---|"]
     per = collections.defaultdict(list)
     for t in turns:
         per[t["agent"]].append(t)
     for agent, ts_ in sorted(per.items(), key=lambda kv: -sum(t["iet"] for t in kv[1])):
         s = sum(t["iet"] for t in ts_)
+        ctx = ts_[-1].get("ctx", 0)
+        flag = " ⚠ 建议交接换会话" if ctx > ROTATE_CTX else ""
         lines.append(f"| {agent} | {ts_[0]['vendor']} | {len(ts_)} | {sum(t['kind'] == 'wake_idle' for t in ts_)} | "
-                     f"{s / 1e6:.2f}M | {s / total:.0%} |")
+                     f"{s / 1e6:.2f}M | {s / total:.0%} | {ctx / 1e3:.0f}k{flag} |")
     return "\n".join(lines) + "\n"
+
+
+ROTATE_CTX = 150_000  # 1d：长驻会话（协调人）上下文超过这个就建议交接换新会话
+
+
+def current_context(root: Path, agent: str) -> int:
+    """账本里该 agent 最近一轮的上下文大小（token）；没有记录返回 0。"""
+    latest = None
+    for t in load_ledger(root):
+        if t.get("agent") == agent and (latest is None or t["start"] >= latest["start"]):
+            latest = t
+    return int(latest.get("ctx", 0)) if latest else 0
 
 
 def ledger_path(root: Path) -> Path:

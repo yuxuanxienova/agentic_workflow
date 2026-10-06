@@ -240,6 +240,93 @@ def components(plan_files: dict[str, list[str]], shared_files) -> list[list[str]
     return sorted(groups.values(), key=lambda g: (-len(g), g[0]))
 
 
+def free_predecessors(plan_files: dict[str, list[str]], sync: list[dict], shared_files) -> dict[str, set[str]]:
+    """不看车道、只看硬约束的依赖：同步点 + 改同一文件的任务按计划顺序串行（= 工具算的链）。"""
+    order = list(plan_files)
+    preds: dict[str, set[str]] = {t: set() for t in order}
+    for i, a in enumerate(order):
+        for b in order[i + 1:]:
+            if shared_files(plan_files[a], plan_files[b]):
+                preds[b].add(a)
+    for edge in sync:
+        preds.setdefault(edge["after"], set()).update(t for t in edge["before"] if t in preds or t in plan_files)
+    return preds
+
+
+def widths(slot: dict[str, int]) -> list[int]:
+    count: dict[int, int] = {}
+    for w in slot.values():
+        count[w] = count.get(w, 0) + 1
+    return [count.get(i, 0) for i in range(1, max(slot.values(), default=0) + 1)]
+
+
+def suggest_agents(plan_files: dict[str, list[str]], sync: list[dict], shared_files) -> dict:
+    """按真实并行度建议 agent 数（2a）：硬约束图每波宽度的 P75；尾部宽度 1 的波次并成一条收尾车道。"""
+    slot, _ = schedule(free_predecessors(plan_files, sync, shared_files))
+    profile = widths(slot)
+    if not profile:
+        return {"profile": [], "agents": 0, "tail": []}
+    ranked = sorted(profile)
+    agents = max(1, ranked[min(len(ranked) - 1, (3 * len(ranked)) // 4)])
+    tail_waves = 0
+    for w in reversed(profile):
+        if w != 1:
+            break
+        tail_waves += 1
+    first_tail = len(profile) - tail_waves + 1
+    tail = sorted((t for t, w in slot.items() if w >= first_tail), key=lambda t: slot[t]) if tail_waves >= 2 else []
+    return {"profile": profile, "agents": agents, "tail": tail}
+
+
+def critical_path(lanes: dict[str, dict], sync: list[dict], plan_files: dict[str, list[str]],
+                  shared_files) -> dict:
+    """车道图上的最长路径及每条边的成因（2c）：同步点 / 同车道且共享文件 / 仅因车道顺序（可拆）。"""
+    preds = predecessors(lanes, sync)
+    slot, cyclic = schedule(preds)
+    if cyclic or not slot:
+        return {"path": [], "edges": [], "files": {}, "depth": 0}
+    where = lane_of(lanes)
+    sync_pairs = {(b, e["after"]): e.get("reason", "") for e in sync for b in e["before"]}
+    end = max(slot, key=lambda t: (slot[t], t))
+    path = [end]
+    while preds.get(path[-1]):
+        path.append(max(preds[path[-1]], key=lambda t: (slot.get(t, 0), t)))
+    path.reverse()
+    edges, files = [], {}
+    for a, b in zip(path, path[1:]):
+        if (a, b) in sync_pairs:
+            edges.append((a, b, "同步点", sync_pairs[(a, b)]))
+            continue
+        hits = shared_files(plan_files.get(a, []), plan_files.get(b, []))
+        if hits:
+            for f in hits:
+                files[f] = files.get(f, 0) + 1
+            edges.append((a, b, "共享文件", "；".join(hits)))
+        else:
+            edges.append((a, b, "仅车道顺序", f"车道 {where.get(a)} 内无共享文件，可拆到别的车道并行"))
+    return {"path": path, "edges": edges, "files": files, "depth": max(slot.values())}
+
+
+def print_analysis(plan_files: dict[str, list[str]], lanes: dict[str, dict], sync: list[dict], shared_files) -> None:
+    advice = suggest_agents(plan_files, sync, shared_files)
+    crit = critical_path(lanes, sync, plan_files, shared_files)
+    print(f"\n## 并行度（2a）\n硬约束图（同步点 + 文件链，不看车道）每波宽度：{advice['profile']}")
+    print(f"→ 建议 agent 数 {advice['agents']}（宽度 P75）；当前车道数 {len(lanes)}"
+          + ("（偏多：多出的 agent 大部分时间只会被叫醒空转）" if len(lanes) > advice["agents"] else ""))
+    if advice["tail"]:
+        print(f"→ 尾部 {len(advice['tail'])} 个任务每波只能做 1 件，建议并成一条收尾车道交给 1 个 agent：{' '.join(advice['tail'])}")
+    print(f"\n## 关键路径（2c）\n车道图深度 {crit['depth']} 波 vs 硬约束深度 {len(advice['profile'])} 波；"
+          f"最长路径 {len(crit['path'])} 个任务：")
+    for a, b, kind, why in crit["edges"]:
+        print(f"  {a} → {b}  [{kind}] {why}")
+    if crit["files"]:
+        top = sorted(crit["files"].items(), key=lambda kv: -kv[1])
+        print("拉长关键路径的文件：" + "，".join(f"{f}×{n}" for f, n in top) + "（拆文件或集中到收尾集成）")
+    loose = sum(1 for e in crit["edges"] if e[2] == "仅车道顺序")
+    if loose:
+        print(f"{loose} 条边只因车道顺序串行：把这些任务挪到空闲车道即可缩短关键路径")
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import check_file_ownership as cfo
@@ -247,6 +334,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="校验车道与同步点，并打印推导出的波次。")
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--components", action="store_true", help="打印按文件重叠合并的链组（规划车道用）")
+    parser.add_argument("--analyze", action="store_true", help="校验后打印建议 agent 数、收尾车道与关键路径归因")
     args = parser.parse_args(argv)
     if not args.plan.is_file():
         print(f"找不到计划文档：{args.plan}", file=sys.stderr)
@@ -269,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
     slot, _ = schedule(predecessors(lanes, sync))
     print(f"✓ 车道校验通过：{len(lanes)} 条车道、{len(plan_files)} 个任务、{len(sync)} 个同步点、"
           f"推导 {max(slot.values())} 个波次")
+    advice = suggest_agents(plan_files, sync, cfo.shared_files)
+    if len(lanes) > advice["agents"] and not args.analyze:
+        print(f"ℹ 按真实并行度建议 {advice['agents']} 个 agent（当前 {len(lanes)} 条车道）；--analyze 看详情")
+    if args.analyze:
+        print_analysis(plan_files, lanes, sync, cfo.shared_files)
     return 0
 
 

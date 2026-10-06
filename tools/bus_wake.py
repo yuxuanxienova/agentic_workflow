@@ -54,6 +54,7 @@ from bus import BROADCAST, bus_dir, cursor_path, default_root, inbox_path, iter_
 
 SOCK = Path.home() / ".codex/app-server-control/app-server-control.sock"
 MAP_NAME = "wake_map.json"
+RETIRED_NAME = "retired.json"
 STATE_NAME = "wake_state.json"
 CLAUDE_PAUSE_NAME = "claude_wake.paused"
 # 防抖窗口：send 后先等这么久，把同一批广播合并成一次唤醒（AGENTIC_WAKE_DEBOUNCE 可覆盖）
@@ -362,8 +363,13 @@ def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | N
     for msg in messages:
         why = None if wake_routing.gated(gate, msg, agent) else wake_routing.relevance(view, agent, msg, conflicts)
         (relevant.append((msg, why)) if why else skipped.append(msg))
-    if not relevant and not reason:
-        return None
+    deferred = [m for m, why in relevant if why == wake_routing.DEFER]
+    urgent = [m for m, why in relevant if why != wake_routing.DEFER]
+    if not urgent and not reason:
+        oldest = min((msg_age(m) for m in deferred), default=0)
+        if len(deferred) < wake_routing.ACCEPT_BATCH and oldest < wake_routing.ACCEPT_MAX_WAIT:
+            return None  # 1b：验收队列未攒满且不急，等下一批
+        reason = f"验收队列 {len(deferred)} 条（自动验收未过或无记录的 DONE）"
     head = f"【bus_wake 自动唤醒】{reason}。" if reason else "【bus_wake 自动唤醒】你有与你相关的新总线消息。"
     text = (
         f"{head}以下已代读（收件箱游标已推进，无需再跑 bus.py read）：\n"
@@ -372,6 +378,20 @@ def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | N
         f"`python3 agentic_workflow/tools/bus_wake.py until --agent {agent} --task <在等的任务>` 登记条件后，"
         "一句话说明在等什么并结束本轮（条件满足前不会再因无关广播被叫醒）。"
     )
+    if view is not None and agent in view.coords:
+        try:
+            import token_usage
+            ctx = token_usage.current_context(root, agent)
+        except Exception:  # noqa: BLE001  账本缺失不影响唤醒
+            ctx = 0
+        if ctx > token_usage.ROTATE_CTX:
+            text += (f"\n上下文（1d）：你的会话上下文已约 {ctx // 1000}k token，每次调用都在重放它。处理完本轮后把"
+                     "未结事项写进 Doc/godot/handoffs/<日期>-coord-handoff.md，然后请用户开新会话接任"
+                     "（沿用同一协调人 ID，新会话先读交接文件）。")
+    if deferred:
+        text += ("\n验收（1c）：每个待验收任务派一个上下文干净的子 agent（可用 Sonnet），只给它 "
+                 "`python3 agentic_workflow/tools/task_state.py packet <任务>` 的输出，让它回一行结论"
+                 "（通过 / 打回 + 理由），你只汇总结论、不自己读 diff。")
     try:
         import plans as plans_mod
         lanes_in = plans_mod.agent_plans(root).get(agent, [])
@@ -380,6 +400,14 @@ def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | N
     if len(lanes_in) > 1:
         text += f" 注意：你在 {'、'.join(lanes_in)} 都有车道，task_state.py 命令请带 --plan <计划名>，按消息标注的计划处理。"
     return text
+
+
+def msg_age(msg: dict) -> float:
+    from datetime import datetime
+    try:
+        return time.time() - datetime.fromisoformat(str(msg.get("ts")).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def mark_delivered(root: Path, agent: str, state: dict, messages: list[dict]) -> None:
@@ -392,50 +420,80 @@ def mark_delivered(root: Path, agent: str, state: dict, messages: list[dict]) ->
     save_json(bus_dir(root) / STATE_NAME, state)
 
 
+def deliver(agent: str, target: tuple[str, str], text: str) -> str:
+    """把一段文字作为新一轮投给会话：woken / busy / error:<msg>。"""
+    kind, address = target
+    if kind == "trae":
+        try:
+            reply = trae_call({"wait": False, "text": text})
+        except (OSError, ValueError) as exc:
+            return f"error:{exc}"
+        if not reply.get("ok"):
+            return "busy" if reply.get("busy") else f"error:{reply.get('error')}"
+        return "woken"
+    if kind == "claude":
+        try:
+            post_claude(address, text)
+        except OSError as exc:
+            return f"error:{exc}"
+        return "woken"
+    server = AppServer()
+    try:
+        if thread_status(server, address) == "active":
+            return "busy"
+        inject_turn(server, address, text)
+    except RuntimeError as exc:
+        return f"error:{exc}"
+    finally:
+        server.sock.close()
+    return "woken"
+
+
 def try_wake(root: Path, agent: str, direct_only: bool = False) -> str:
-    """有未唤醒的新消息且会话空闲 → 注入一轮（不等它跑完，turn 在 daemon 里继续）。
+    """有值得叫醒的新消息（或条件满足）且会话空闲 → 注入一轮（不等它跑完）。
     返回 woken / nothing / busy / unmapped / error:<msg>。"""
     target = wake_targets(root).get(agent)
     if not target:
         return "unmapped"
-    kind, address = target
     with state_lock(root):
         state = load_json(bus_dir(root) / STATE_NAME)
         messages, text = plan_wake(root, agent, int(state.get(agent, 0)), direct_only)
         if text is None:
             return "nothing"
-        seq_text = ",".join(str(m.get("seq")) for m in messages[-8:]) or "条件"
-        if kind == "trae":
-            try:
-                reply = trae_call({"wait": False, "text": text})
-            except (OSError, ValueError) as exc:
-                return f"error:{exc}"
-            if not reply.get("ok"):
-                return "busy" if reply.get("busy") else f"error:{reply.get('error')}"
+        result = deliver(agent, target, text)
+        if result == "woken":
             mark_delivered(root, agent, state, messages)
-            log_wake(root, agent, f"唤醒 #{seq_text}（trae）")
-            return "woken"
-        if kind == "claude":
-            try:
-                post_claude(address, text)
-            except OSError as exc:
-                return f"error:{exc}"
-            mark_delivered(root, agent, state, messages)
-            log_wake(root, agent, f"唤醒 #{seq_text}（claude）")
-            return "woken"
-        thread_id = address
-        server = AppServer()
-        try:
-            if thread_status(server, thread_id) == "active":
-                return "busy"
-            inject_turn(server, thread_id, text)
-        except RuntimeError as exc:
-            return f"error:{exc}"
-        finally:
-            server.sock.close()
-        mark_delivered(root, agent, state, messages)
-        log_wake(root, agent, f"唤醒 #{seq_text}")
-        return "woken"
+            seq_text = ",".join(str(m.get("seq")) for m in messages[-8:]) or "条件"
+            log_wake(root, agent, f"唤醒 #{seq_text}（{target[0]}）")
+        return result
+
+
+def retire_finished(root: Path) -> None:
+    """2b：车道已全部 done 的 agent 通知一次「可以结束会话」，之后只会因点对点消息被叫醒。
+    车道又加了新任务（不再 finished）时自动取消退场记录。"""
+    view = wake_routing.load_view(root)
+    if view is None:
+        return
+    path = bus_dir(root) / RETIRED_NAME
+    retired = load_json(path)
+    changed = False
+    for agent, target in wake_targets(root).items():
+        finished = view.lane_finished(agent) and agent not in view.coords
+        if not finished:
+            if retired.pop(agent, None) is not None:
+                changed = True
+            continue
+        if agent in retired:
+            continue
+        text = ("【bus_wake 车道收工】你在 active 计划里的车道任务已全部 done。按规矩收尾：确认改动都已提交、"
+                "task_state 备注写清验收等级后结束本会话即可。之后与你无关的广播不会再叫醒你；"
+                "有人点对点找你时仍会叫醒。")
+        if deliver(agent, target, text) == "woken":
+            retired[agent] = time.strftime("%Y-%m-%d %H:%M:%S")
+            log_wake(root, agent, "车道收工通知（退场）")
+            changed = True
+    if changed:
+        save_json(path, retired)
 
 
 def log_wake(root: Path, agent: str, text: str) -> None:
@@ -527,6 +585,10 @@ def cmd_wake(args) -> int:
 def cmd_watch(args) -> int:
     print(f"bus_wake watch：每 {args.interval}s 检查一次（Ctrl-C 退出）", flush=True)
     while True:
+        try:
+            retire_finished(args.root)
+        except Exception as exc:  # noqa: BLE001  退场通知是增强，不能拖垮 watch
+            print(f"{time.strftime('%H:%M:%S')} 退场检查出错：{exc}", flush=True)
         audience = broadcast_audience_of(args.root)
         for agent in wake_targets(args.root):
             try:

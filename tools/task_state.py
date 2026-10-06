@@ -342,6 +342,10 @@ def append_event(root: Path, **fields) -> dict:
         }
         if fields.get("claim"):
             entry["claim"] = True
+        if fields.get("auto"):  # 1a 自动验收结论（pass / fail + 原因）
+            entry["auto"] = fields["auto"]
+            if fields.get("auto_reasons"):
+                entry["auto_reasons"] = fields["auto_reasons"]
         append_jsonl(events_path(root), entry)
     return entry
 
@@ -544,6 +548,39 @@ def notify_conflicts(args, task: str, warnings: list[tuple[str, str]]) -> None:
         print(f"  → 已向 {other_agent} 发送 CONFLICT（bus.py read --agent {other_agent} --unread）", file=sys.stderr)
 
 
+def auto_accept_result(args) -> tuple[str, list[str]] | None:
+    """1a 自动验收：pass → 协调人不看；fail → 原因随事件落库并进协调人验收队列。检查本身出错不影响 done。"""
+    try:
+        import auto_accept
+        planned = parse_plan(args.plan).get(args.task, {}).get("files", []) if args.plan else []
+        reasons, hints = auto_accept.check(args.repo, note_text(args), planned, spec_hits_path)
+    except Exception as error:  # noqa: BLE001
+        return "fail", [f"自动验收出错：{error}"]
+    for hint in hints:
+        print(f"ℹ {hint}", file=sys.stderr)
+    return ("fail", reasons) if reasons else ("pass", [])
+
+
+def report_auto_accept(args, auto: tuple[str, list[str]]) -> None:
+    verdict, reasons = auto
+    if verdict == "pass":
+        print("✓ 自动验收通过（等级 / 提交 / 改动范围均符合计划）：协调人不需要看，不必再发 DONE 给协调人")
+        return
+    print("⚠ 自动验收未过，已进协调人验收队列：" + "；".join(reasons), file=sys.stderr)
+    coords = sorted(set(plans_mod.COORD_RE.findall((args.pdir / plans_mod.DOC_NAME).read_text(encoding="utf-8"))))
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import bus
+    for coord in coords:
+        if coord == args.agent or bus.bad_agent_id(coord):
+            continue
+        message = argparse.Namespace(
+            root=args.root, sender=args.agent, recipient=coord, type="DONE", task=args.task,
+            body=f"[自动验收未过] {'；'.join(reasons)}。备注：{note_text(args)}", refs=args.task, plan=args.plan_name,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            bus.cmd_send(message)
+
+
 def cmd_transition(args, kind: str) -> int:
     """claim/start/submit/done 的通用转移执行（允许前跳，无验收门）。"""
     root: Path = args.pdir
@@ -562,6 +599,7 @@ def cmd_transition(args, kind: str) -> int:
         )
         return 2
 
+    auto = auto_accept_result(args) if kind == "done" else None
     entry = append_event(
         root,
         task=args.task,
@@ -569,8 +607,11 @@ def cmd_transition(args, kind: str) -> int:
         agent=args.agent,
         note=note_text(args),
         claim=True if kind == "claim" else None,
+        **({"auto": auto[0], "auto_reasons": auto[1]} if auto else {}),
     )
     print(f"✓ {args.task}: {current} → {target}{'（接管）' if takeover else ''}  #{entry['seq']}  agent={args.agent}")
+    if auto:
+        report_auto_accept(args, auto)
     if kind in ("claim", "start"):
         warnings = claim_warnings(args, args.task, states, current_holders(events))
         if warnings:
@@ -660,6 +701,34 @@ def cmd_status(args) -> int:
     print(f"{args.task}  状态={state}  最后更新={updated.get(args.task, '-')}")
     for item in notes.get(args.task, []):
         print(f"  备注 {item}")
+    return 0
+
+
+def cmd_packet(args) -> int:
+    """packet（1c）：给验收子 agent 的最小材料包——任务规格行、最近 done 备注与自动验收结论、
+    本任务提交的 stat 与 diff（截断）。子 agent 只读这个，不进协调人的长上下文。"""
+    import auto_accept
+    spec = parse_plan(args.plan).get(args.task, {}) if args.plan else {}
+    done = [e for e in load_events(args.pdir) if e.get("task") == args.task and e.get("to") == "done"]
+    last = done[-1] if done else {}
+    print(f"# 验收材料 {args.task}（计划 {args.plan_name}）")
+    print(f"规格：{spec.get('title', '（计划里找不到该任务）')}")
+    print(f"登记改动文件：{'；'.join(spec.get('files', [])) or '-'}")
+    print(f"done 备注（{last.get('agent', '-')} {last.get('ts', '-')}）：{last.get('note', '（尚未 done）')}")
+    if last.get("auto"):
+        print(f"自动验收：{last['auto']}" + (f"——{'；'.join(last.get('auto_reasons', []))}" if last.get("auto_reasons") else ""))
+    planned = spec.get("files", [])
+    budget = args.max_lines
+    for sha in dict.fromkeys(auto_accept.SHA_RE.findall(last.get("note", ""))):
+        files = auto_accept.commit_files(args.repo, sha)
+        if files is None or not any(auto_accept.planned_hit(f, planned, spec_hits_path) for f in files):
+            continue
+        show = auto_accept.git(args.repo, "show", "--stat", "--patch", "--format=## %h %s", sha).stdout.splitlines()
+        print("\n".join(show[:budget]))
+        if len(show) > budget:
+            print(f"…（diff 截断，余 {len(show) - budget} 行；需要时 git show {sha} -- <文件>）")
+        budget = max(40, budget // 2)
+    print("\n请回一行结论：通过 / 打回（理由 + 需要补什么）。验收标准见计划规格与 AGENTS.md 验收铁律。")
     return 0
 
 
@@ -1087,7 +1156,7 @@ def cmd_migrate(args) -> int:
 
 
 WRITE_COMMANDS = {"claim", "start", "submit", "done", "block", "fail", "unblock", "revoke", "seed"}
-TASK_COMMANDS = WRITE_COMMANDS - {"seed"} | {"status", "migrate"}
+TASK_COMMANDS = WRITE_COMMANDS - {"seed"} | {"status", "migrate", "packet"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1171,6 +1240,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="查看单任务状态与备注")
     add_task(p)
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("packet", help="（1c）打印给验收子 agent 的材料包：规格 + 备注 + 本任务提交 diff")
+    add_task(p)
+    p.add_argument("--max-lines", type=int, default=400, help="diff 最多打印行数（默认 400）")
+    p.set_defaults(func=cmd_packet)
 
     p = sub.add_parser("list", help="列出任务状态")
     p.add_argument("--state", choices=ALL_STATES, help="只看某状态")

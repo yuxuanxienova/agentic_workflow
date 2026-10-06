@@ -193,8 +193,9 @@ def cross_plan_agent_clashes(plan: Path) -> bool:
     root = repo / ".agentic"
     if not root.is_dir():
         return False
-    own = next((name for name, _, meta in plans_mod.active_plans(root)
-                if meta.get("source") and (repo / meta["source"]).resolve() == plan.resolve()), "")
+    own = next((name for name, pdir, meta in plans_mod.active_plans(root)
+                if (meta.get("source") and (repo / meta["source"]).resolve() == plan.resolve())
+                or (pdir / plans_mod.DOC_NAME).resolve() == plan.resolve()), "")  # 源文件或副本都算自己
     clashes = plans_mod.agent_clashes(root, own, plan)
     for agent, others in clashes.items():
         print(f"✗ 车道 agent ID {agent} 已在 active 计划 {', '.join(others)} 的车道表里（一个 ID 对应一个会话）；"
@@ -216,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="以 JSON 输出冲突结果")
     parser.add_argument("--lanes", action="store_true", help="校验车道表与同步点（跨车道共享文件必须已排序）")
     parser.add_argument("--components", action="store_true", help="打印按文件重叠合并的链组")
+    parser.add_argument("--analyze", action="store_true", help="配合 --lanes：打印建议 agent 数、收尾车道与关键路径归因")
     args = parser.parse_args(argv)
 
     plan = args.plan if args.plan is not None else DEFAULT_PLAN
@@ -241,7 +243,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.lanes or args.components:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import lanes as lanes_mod
-        forwarded = ["--plan", str(plan)] + (["--components"] if args.components else [])
+        forwarded = ["--plan", str(plan)] + (["--components"] if args.components else []) \
+            + (["--analyze"] if args.analyze else [])
         code = lanes_mod.main(forwarded)
         if args.lanes and cross_plan_agent_clashes(Path(plan)):
             return code or 1
