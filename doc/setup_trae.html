@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trae 车道接入</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111c2e; --panel2:#16233a; --line:#24354f;
+    --text:#dbe7f5; --muted:#8fa6c0; --accent:#6bccff; --accent2:#6bffb8;
+    --warn:#ffb86b; --danger:#ff7a85; --purple:#b39dff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       line-height:1.75;font-size:15.5px;-webkit-font-smoothing:antialiased}
+  .wrap{display:grid;grid-template-columns:262px minmax(0,1fr);max-width:1420px;margin:0 auto}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+      padding:28px 18px;border-right:1px solid var(--line);background:#0a111d}
+  nav .brand{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:.4px;margin-bottom:4px}
+  nav .brand small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;letter-spacing:0}
+  nav ol{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
+  nav ol li{counter-increment:s;margin:2px 0}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;display:block;padding:5px 9px;border-radius:7px;transition:.15s}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  nav a::before{content:counter(s) ". ";color:#4d6b8a;font-family:var(--mono);font-size:11px}
+  main{padding:44px 52px 120px;min-width:0}
+  h1{font-size:31px;line-height:1.32;margin:0 0 8px;letter-spacing:-.4px}
+  .lede{color:var(--muted);font-size:16px;margin:0 0 8px}
+  .meta{color:#5d7794;font-size:12.5px;font-family:var(--mono);margin-bottom:34px}
+  h2{font-size:23px;margin:60px 0 14px;padding-top:14px;border-top:1px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:17px;margin:32px 0 10px;color:#eaf3ff}
+  p{margin:10px 0}
+  a{color:var(--accent)}
+  code{font-family:var(--mono);font-size:12.8px;background:#0a1526;border:1px solid var(--line);
+       border-radius:5px;padding:1.5px 6px;color:#a8dcff;overflow-wrap:anywhere}
+  pre{background:#0a1526;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:#c7ddf2;font-size:12.8px;line-height:1.65}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  strong{color:#f0f7ff}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.3px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cfe4fb;font-weight:600;font-size:12.8px;white-space:nowrap}
+  tr:nth-child(even) td{background:#0e1828}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1.5px 7px;border-radius:5px;
+       border:1px solid var(--line);background:#0a1526;color:var(--muted);white-space:nowrap}
+  .tag.ok{color:var(--accent2);border-color:#2a5a45}
+  .tag.no{color:var(--danger);border-color:#5a2a31}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:3px solid var(--accent);
+             background:#0e1a2b;border-radius:0 10px 10px 0;color:#c3d8ee}
+  blockquote.warn{border-left-color:var(--warn);background:#1d1a12}
+  blockquote.danger{border-left-color:var(--danger);background:#1f1416}
+  .fig{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .fig svg{display:block;width:100%;height:auto}
+  .fig figcaption{color:var(--muted);font-size:12.5px;text-align:center;margin-top:10px}
+  .src{font-size:12.6px;color:var(--muted)}
+  .foot{color:#5d7794;font-size:12.5px;text-align:center;margin-top:60px}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+    nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    main{padding:28px 16px 80px}
+    .tblwrap{overflow-x:auto}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">Trae 车道接入<small>bus.py send → Trae agent 自动开一轮 · 2026-10-05</small></div>
+  <ol>
+    <li><a href="#s0">问题与结论</a></li>
+    <li><a href="#s1">原理</a></li>
+    <li><a href="#s2">接入步骤</a></li>
+    <li><a href="#s3">验证往返</a></li>
+    <li><a href="#s4">日常使用</a></li>
+    <li><a href="#s5">坑</a></li>
+    <li><a href="#s6">调研过、没采用的方案</a></li>
+    <li><a href="#s7">Trae 升级后怎么修</a></li>
+  </ol>
+</nav>
+
+<main>
+<h1>Trae 车道接入</h1>
+<p class="lede">让 Trae CN 的 IDE agent（如 DeepSeek-V4.1-Flash）和 Codex / Claude 一样挂在文件总线上：收到消息自动开工，干完用 <code>bus.py</code> 回信。</p>
+<div class="meta">实测环境：Trae CN 3.3.104 · macOS · SOLO agent + DeepSeek-V4.1-Flash · 往返 #872 → #873</div>
+
+<h2 id="s0">问题与结论</h2>
+<p>Trae 没有公开的 API 或 CLI 能让外部脚本叫醒它的 agent。<code>trae-cn</code> 命令只是 VS Code CLI 换皮。</p>
+<p>突破口：Trae CN 内置了「飞书 / 微信 IM 桥」（<code>cloudide.icube-im-bridge</code>），手机上发的消息就是靠它投进 agent 会话的。它在工作台注册的内部命令 <code>im.bridge.handleIncomingMessage</code>，任何扩展都能调用。</p>
+<p>所以我们写了一个约 40 行的本地扩展 <code>trae_bridge/</code>：开一个 unix socket，收到文本就调这个命令。<code>bus_wake.py</code> 把它当作第三种唤醒通道。</p>
+<table>
+<tr><th>厂商</th><th>唤醒方式</th><th>空闲检测</th><th>文档</th></tr>
+<tr><td>Codex</td><td>共享 app-server daemon，<code>turn/start</code></td><td><span class="tag ok">有</span></td><td><a href="setup_codex.html">setup_codex</a></td></tr>
+<tr><td>Claude Code</td><td>会话收件箱 socket</td><td><span class="tag ok">有</span></td><td><a href="setup_claude.html">setup_claude</a></td></tr>
+<tr><td>Trae CN</td><td>本地扩展 → 内部 IM 桥命令</td><td><span class="tag no">无</span>，由 Trae 自己排队</td><td>本页</td></tr>
+</table>
+
+<h2 id="s1">原理</h2>
+<pre><code>bus.py send --to trae-1
+  └─ 自动调 bus_wake.try_wake(trae-1)
+       └─ trae_agent()：ping ~/.trae-cn/agentic-bridge.sock，确认 Trae 窗口打开的是本仓库
+       └─ trae_call({"wait": false, "text": 唤醒文案})
+            └─ [Trae 扩展宿主] local.agentic-bus-bridge
+                 └─ vscode.commands.executeCommand("im.bridge.handleIncomingMessage",
+                        {channel:"feishu", text, messageId:"bus-…", sentAt})
+                      └─ [工作台] 文本作为用户消息进入 Trae 当前 agent 会话（聊天面板可见）
+Trae agent 读 AGENTS.md（经 .trae/rules/project.md 转发）→ bus.py read / 干活 / bus.py send 回信</code></pre>
+<p>socket 协议是一行 JSON 请求、一行 JSON 回复：</p>
+<table>
+<tr><th>请求</th><th>作用</th></tr>
+<tr><td><code>{"op":"ping"}</code></td><td>返回 <code>{"ok":true,"busy":false,"workspace":[…]}</code>，用来做在线检测和仓库匹配</td></tr>
+<tr><td><code>{"wait":false,"text":"…"}</code></td><td>投递消息（正式通道）</td></tr>
+<tr><td><code>{"op":"exec","cmd":"…","args":[…]}</code></td><td>调试用：执行任意 Trae 命令并返回结果，例如 <code>icube.chat.getCurrentSessionId</code></td></tr>
+<tr><td><code>{"text":"…"}</code></td><td>走 <code>feishu.bridge.sendAndWaitResponse</code>。<strong>SOLO 模式下无效</strong>，见坑 1</td></tr>
+</table>
+
+<h2 id="s2">接入步骤</h2>
+<ol>
+<li>安装扩展：<pre><code>bash agentic_workflow/trae_bridge/install.sh</code></pre>
+脚本把 <code>package.json</code> 和 <code>extension.js</code> 拷到 <code>~/.trae-cn/extensions/local.agentic-bus-bridge-0.0.1/</code>，并登记进 <code>~/.trae-cn/extensions/extensions.json</code>。</li>
+<li>在 Trae 里打开仓库根目录（<code>EndlessSpace/</code>，不是子目录），开一个 agent 对话，选好模型。</li>
+<li><code>Cmd+Shift+P</code> → <code>Developer: Reload Window</code>，扩展会在 <code>onStartupFinished</code> 时激活。</li>
+<li>（可选）改 agent ID：往 <code>.agentic/bus/trae_agent.txt</code> 写一行，例如 <code>trae-2</code>。默认是 <code>trae-1</code>。</li>
+</ol>
+
+<h2 id="s3">验证往返</h2>
+<pre><code>ls -l ~/.trae-cn/agentic-bridge.sock              # 扩展已激活
+python3 agentic_workflow/tools/bus_wake.py list    # 出现  trae  trae-1  …
+python3 agentic_workflow/tools/bus.py send --from &lt;我的ID&gt; --to trae-1 --type PROPOSE \
+  --body "连通测试：用 bus.py 回我一条 ACCEPT，body 写你的模型名，不要改文件。"
+python3 agentic_workflow/tools/bus.py read --agent &lt;我的ID&gt; --unread   # 约 1 分钟内收到 trae-1 的 ACCEPT</code></pre>
+<p>Trae 聊天面板里会看到这条唤醒文案作为用户消息出现，agent 随即开始跑。</p>
+
+<h2 id="s4">日常使用</h2>
+<ul>
+<li>在计划源文件的车道表里给 <code>trae-1</code> 分车道，规矩和 Codex / Claude 完全一样（claim → 干活 → done，走总线）。</li>
+<li>点对点 <code>bus.py send --to trae-1</code> 发送时就会叫醒；广播和巡检靠 <code>bus_wake.py watch</code> 轮询。</li>
+<li>手动叫一次：<code>bus_wake.py wake --agent trae-1</code>（按收件箱新消息投递）或加 <code>--text "…"</code> 发自定义文本。</li>
+<li>Trae 没有回调，看它在干什么只能看 Trae 面板、它的总线消息和 <code>task_state.py log</code>。</li>
+</ul>
+
+<h2 id="s5">坑</h2>
+<blockquote class="danger"><strong>1. <code>feishu.bridge.sendAndWaitResponse</code> 在 SOLO 模式下立即返回空</strong><br>
+它名字看着最合适（发消息并等回复），但实测立刻返回 <code>{"text":""}</code>，日志里也没有动作。要用 <code>im.bridge.handleIncomingMessage</code>（IM 桥真实的收消息路径）。</blockquote>
+<blockquote class="warn"><strong>2. 没有空闲检测</strong><br>
+工作台里找不到暴露「会话是否在跑」的命令（相关逻辑在 <code>xc</code> 服务内部，扩展拿不到）。所以每批新消息只投一次（推进 <code>wake_state.json</code> 游标），Trae 忙时由它自己的消息队列（<code>AI.soloLite.messageQueue</code>）排队。不要把 watch 间隔调得很短来「补叫」，会刷屏。</blockquote>
+<blockquote class="warn"><strong>3. 只能投到 Trae 当前选中的会话</strong><br>
+目标由 Trae 自己决定，扩展指定不了会话。所以一个 Trae 窗口只接一个 agent；切换聊天会话后，消息会去新会话。</blockquote>
+<blockquote class="warn"><strong>4. <code>trae-cn --install-extension</code> 会失败</strong><br>
+Trae 正在运行、又曾删过同名扩展目录时，会报「Please restart VS Code before reinstalling」。<code>install.sh</code> 因此直接写扩展目录并改 <code>extensions.json</code>，再 Reload Window 即可。</blockquote>
+<blockquote class="warn"><strong>5. 仓库匹配是严格相等</strong><br>
+<code>trae_agent()</code> 要求 ping 返回的 <code>workspace</code> 里有仓库根的绝对路径。Trae 打开的是子目录（如 <code>agentic_workflow/</code>）就不会被发现。</blockquote>
+<blockquote class="warn"><strong>6. 后台 watch 进程要重启</strong><br>
+改了 <code>bus_wake.py</code> 后，已经在跑的 <code>watch</code> 仍是旧代码。点对点 send 不受影响（每次都新起进程），但轮询叫醒要重启 watch 才生效。</blockquote>
+<blockquote class="warn"><strong>7. 扩展改动要 Reload Window</strong><br>
+改 <code>extension.js</code> 后要重跑 <code>install.sh</code> 并 Reload，这会打断 Trae 正在跑的对话，挑空闲时做。</blockquote>
+<blockquote><strong>8. agent ID 规矩照旧</strong><br>
+裸 <code>trae</code> 会被 <code>task_state.py</code> 拒绝，必须写 <code>trae-1</code> 这类带实例号的 ID。Trae 读 <code>.trae/rules/project.md</code>，它只做转发到 <code>AGENTS.md</code>，不要在里面写第二份规矩。</blockquote>
+
+<h2 id="s6">调研过、没采用的方案</h2>
+<table>
+<tr><th>方案</th><th>为什么没用</th></tr>
+<tr><td>字节开源 <code>bytedance/trae-agent</code>（<code>trae-cli run</code>）</td><td>能无界面跑，但不是 IDE 里的 agent；DeepSeek 得用自己的 API key 付费，用不了 Trae 内置额度</td></tr>
+<tr><td><code>trae-cn chat -m agent "…"</code></td><td>VS Code 原生命令，大概率打开的是 VS Code 聊天面板而不是 Trae 的 AI 面板，也拿不到结果</td></tr>
+<tr><td><code>trae-cn://</code> 深链</td><td>只有打开文件之类的标准链接，没有「带提示词打开聊天」</td></tr>
+<tr><td>AppleScript 模拟键盘输入聊天框</td><td>要辅助功能权限、窗口必须在前台，UI 一改就坏</td></tr>
+<tr><td>MCP</td><td>MCP 只能被 agent 调用，不能主动叫醒空闲 agent</td></tr>
+<tr><td>trae2api 之类代理额度的项目</td><td>冒用登录态，违反条款，有封号风险</td></tr>
+</table>
+
+<h2 id="s7">Trae 升级后怎么修</h2>
+<p>症状：<code>bus_wake.py list</code> 看不到 trae，或者投递返回 ok 但面板没反应。按下面的顺序排查：</p>
+<pre><code>W="/Applications/Trae CN.app/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js"
+grep -oE '"im\.bridge\.[a-zA-Z]+"' "$W" | sort -u        # 命令还在吗、改名了吗
+grep -oE 'id:"[a-zA-Z0-9_.]*(chat|session|solo)[a-zA-Z0-9_.]*"' "$W" | sort -u   # 有没有新的会话/状态命令
+grep -rh "local.agentic-bus-bridge" ~/Library/Application\ Support/Trae\ CN/logs/*/ | tail   # 扩展有没有激活</code></pre>
+<p>命令改名就改 <code>trae_bridge/extension.js</code> 里的命令 ID，重跑 <code>install.sh</code> 再 Reload。如果新版出现了查询会话状态的命令，可以给 <code>bus_wake</code> 补上空闲检测，解决坑 2。</p>
+
+<p class="foot">EndlessSpace agentic workflow · Trae 接入 · 2026-10-05</p>
+</main>
+</div>
+</body>
+</html>
