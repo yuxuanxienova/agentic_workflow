@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新仓库接入指南</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#111c2e; --panel2:#16233a; --line:#24354f;
+    --text:#dbe7f5; --muted:#8fa6c0; --accent:#6bccff; --accent2:#6bffb8;
+    --warn:#ffb86b; --danger:#ff7a85; --purple:#b39dff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+       line-height:1.75;font-size:15.5px;-webkit-font-smoothing:antialiased}
+  .wrap{display:grid;grid-template-columns:262px minmax(0,1fr);max-width:1420px;margin:0 auto}
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+      padding:28px 18px;border-right:1px solid var(--line);background:#0a111d}
+  nav .brand{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:.4px;margin-bottom:4px}
+  nav .brand small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;letter-spacing:0}
+  nav ol{list-style:none;margin:18px 0 0;padding:0;counter-reset:s}
+  nav ol li{counter-increment:s;margin:2px 0}
+  nav a{color:var(--muted);text-decoration:none;font-size:13px;display:block;padding:5px 9px;border-radius:7px;transition:.15s}
+  nav a:hover{color:var(--text);background:var(--panel2)}
+  nav a::before{content:counter(s) ". ";color:#4d6b8a;font-family:var(--mono);font-size:11px}
+  main{padding:44px 52px 120px;min-width:0}
+  h1{font-size:31px;line-height:1.32;margin:0 0 8px;letter-spacing:-.4px}
+  .lede{color:var(--muted);font-size:16px;margin:0 0 8px}
+  .meta{color:#5d7794;font-size:12.5px;font-family:var(--mono);margin-bottom:34px}
+  h2{font-size:23px;margin:60px 0 14px;padding-top:14px;border-top:1px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:17px;margin:32px 0 10px;color:#eaf3ff}
+  p{margin:10px 0}
+  a{color:var(--accent)}
+  code{font-family:var(--mono);font-size:12.8px;background:#0a1526;border:1px solid var(--line);
+       border-radius:5px;padding:1.5px 6px;color:#a8dcff;overflow-wrap:anywhere}
+  pre{background:#0a1526;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:#c7ddf2;font-size:12.8px;line-height:1.65}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  strong{color:#f0f7ff}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.3px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cfe4fb;font-weight:600;font-size:12.8px;white-space:nowrap}
+  tr:nth-child(even) td{background:#0e1828}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1.5px 7px;border-radius:5px;
+       border:1px solid var(--line);background:#0a1526;color:var(--muted);white-space:nowrap}
+  .tag.ok{color:var(--accent2);border-color:#2a5a45}
+  .tag.no{color:var(--danger);border-color:#5a2a31}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:3px solid var(--accent);
+             background:#0e1a2b;border-radius:0 10px 10px 0;color:#c3d8ee}
+  blockquote.warn{border-left-color:var(--warn);background:#1d1a12}
+  blockquote.danger{border-left-color:var(--danger);background:#1f1416}
+  .fig{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .fig svg{display:block;width:100%;height:auto}
+  .fig figcaption{color:var(--muted);font-size:12.5px;text-align:center;margin-top:10px}
+  .src{font-size:12.6px;color:var(--muted)}
+  .foot{color:#5d7794;font-size:12.5px;text-align:center;margin-top:60px}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr}
+    nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    main{padding:28px 16px 80px}
+    .tblwrap{overflow-x:auto}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">新仓库接入指南<small>从零把 agentic_workflow 装进一个新项目 · 2026-10-06</small></div>
+  <ol>
+    <li><a href="#s0">总览与顺序</a></li>
+    <li><a href="#s1">① 克隆框架、配 .gitignore</a></li>
+    <li><a href="#s2">② 写 AGENTS.md 与转发文件</a></li>
+    <li><a href="#s3">③ 写第一份计划源文件</a></li>
+    <li><a href="#s4">④ 校验并开计划</a></li>
+    <li><a href="#s5">⑤ 唤醒、巡检、验收守护进程</a></li>
+    <li><a href="#s6">⑥ 开车道会话</a></li>
+    <li><a href="#s7">写死在工具里的项目值</a></li>
+    <li><a href="#s8">检查清单</a></li>
+  </ol>
+</nav>
+
+<main>
+<h1>新仓库接入指南</h1>
+<p class="lede">在一个新项目里从零接入整套多 agent 协作：入口文件（AGENTS.md）、计划源文件、任务状态、消息总线、自动唤醒、巡检与验收 agent。本页给出可直接复制的 AGENTS.md 模板和计划模板，并列出目前写死为 EndlessSpace 的工具参数。</p>
+<div class="meta">基于 EndlessSpace plan1–plan6 的实际配置整理 · macOS · 2026-10-06</div>
+
+<h2 id="s0">总览与顺序</h2>
+<table>
+<tr><th>步骤</th><th>产物</th><th>必需？</th></tr>
+<tr><td>① 克隆框架、配 .gitignore</td><td><code>agentic_workflow/</code>、<code>.agentic/</code></td><td><span class="tag ok">必需</span></td></tr>
+<tr><td>② 写入口文件</td><td><code>AGENTS.md</code> + <code>CLAUDE.md</code> / <code>.trae/rules/project.md</code> 转发</td><td><span class="tag ok">必需</span></td></tr>
+<tr><td>③ 写计划源文件</td><td><code>docs/plans/&lt;日期&gt;-&lt;名&gt;.md</code>（任务表 + 车道表 + 同步点）</td><td><span class="tag ok">必需</span></td></tr>
+<tr><td>④ 校验并开计划</td><td><code>.agentic/plans/&lt;名&gt;/</code></td><td><span class="tag ok">必需</span></td></tr>
+<tr><td>⑤ 守护进程</td><td>launchd：bus-wake / lane-patrol（可选 token-ledger）</td><td>多车道并行时必需</td></tr>
+<tr><td>⑥ 开车道会话</td><td>每车道一个会话，侧栏名 <code>&lt;计划&gt;-&lt;车道&gt;</code></td><td><span class="tag ok">必需</span></td></tr>
+</table>
+<blockquote>只有一两个 agent、不需要自动唤醒时，做 ①–④ 就能用：<code>task_state.py</code> 跟踪状态，<code>bus.py</code> 留痕，人手动叫醒会话。</blockquote>
+
+<h2 id="s1">① 克隆框架、配 .gitignore</h2>
+<p><code>agentic_workflow/</code> 是独立 git 仓库，放在项目根下、由项目忽略；工具默认把 <code>&lt;git 仓库根&gt;/.agentic</code> 当协调目录。</p>
+<pre><code>cd &lt;新项目根&gt;
+git clone &lt;agentic_workflow 仓库地址&gt; agentic_workflow
+
+cat &gt;&gt; .gitignore &lt;&lt;'EOF'
+agentic_workflow/
+# 计划副本 + events.jsonl + 视图入库；锁 / 注册表 / 总线是易变运行时数据，不入库
+.agentic/registry.json
+.agentic/locks/
+.agentic/bus/
+.agentic/plans/*/.events.lock
+EOF</code></pre>
+<p>只需要 Python 3 标准库和 git，不用装依赖。</p>
+
+<h2 id="s2">② 写 AGENTS.md 与转发文件</h2>
+<p>规矩只写一份，放在仓库根 <code>AGENTS.md</code>（Codex 原生读取）；其他厂商的入口文件只做转发。原因与各厂商读取时机见 <a href="agent_context.html">agent_context.html</a>。</p>
+<table>
+<tr><th>文件</th><th>谁读</th><th>内容</th></tr>
+<tr><td><code>AGENTS.md</code></td><td>Codex（原生）及所有 agent</td><td>唯一真源，模板见下</td></tr>
+<tr><td><code>CLAUDE.md</code></td><td>Claude Code</td><td>一句说明 + <code>@AGENTS.md</code>（导入，整份进上下文）</td></tr>
+<tr><td><code>.trae/rules/project.md</code></td><td>Trae</td><td>frontmatter <code>alwaysApply: true</code> + 「开工前先读 AGENTS.md」</td></tr>
+</table>
+
+<h3>CLAUDE.md</h3>
+<pre><code># &lt;项目名&gt;
+
+&gt; 本项目所有 agent 规矩的唯一真源是仓库根 `AGENTS.md`。本文件只做转发，不要在别处维护第二份规矩。
+
+@AGENTS.md</code></pre>
+
+<h3>.trae/rules/project.md</h3>
+<pre><code>---
+alwaysApply: true
+---
+
+# &lt;项目名&gt; 项目规矩
+
+本仓库所有 agent 规矩的唯一真源是仓库根 `AGENTS.md`。开工前必须先读它，尤其「任务与状态入口」一节。</code></pre>
+
+<h3>AGENTS.md 模板</h3>
+<p>前四节是框架通用规矩，可原样保留（把 <code>&lt;…&gt;</code> 换掉）；后两节写本项目自己的东西。EndlessSpace 的完整版本是仓库根 <code>AGENTS.md</code>，可对照。</p>
+<pre><code># &lt;项目名&gt; — Agent 协作入口
+
+&gt; 本文件是所有 agent（Codex / Claude Code / Trae）的唯一指令真源。`CLAUDE.md` 与 `.trae/rules/project.md` 只做转发。交接记录放 `docs/handoffs/`。
+
+## 任务与状态入口（开工前必做）
+
+- 计划源文件在 `docs/plans/&lt;日期&gt;-&lt;名&gt;.md`，只写「做什么、改哪些文件、验收等级」，不含状态。
+- 开计划：`python3 agentic_workflow/tools/task_state.py plan open &lt;计划名&gt; --source docs/plans/&lt;文件&gt;.md`；没 open 的计划不得派工。改计划只改源文件，工具自动同步副本。收尾 `plan close &lt;计划名&gt;`。
+- 任务真实状态唯一真源：`.agentic/plans/&lt;计划名&gt;/events.jsonl`；文档里手写的 ✅ 无效。看板/甘特/对账是生成物，禁止手改。
+- 状态机 `pending → claimed → active → verify → done`（旁支 blocked / failed / migrated）；开工前先 `claim`。
+- `done` 是灯不是门：在 `--note` 写实际达到的验收等级、证据路径和本任务提交 SHA；没达到也可以记 done，但要如实写缺什么。
+- agent ID 必须唯一：`&lt;厂商&gt;-&lt;会话/实例&gt;`（如 `claude-&lt;项目&gt;-ui`、`codex-1`），子 agent 追加 `/&lt;名&gt;`；裸 `claude` / `codex` 会被拒。
+- Claude 会话开工第一件事 `/rename &lt;计划&gt;-&lt;车道&gt;`，否则 VS Code 侧栏显示 Untitled。
+
+## 派工：链 → 车道 → 波次
+
+- 改同一文件的任务必须串行（工具自动算）；车道是唯一派工单位；波次由工具推导。
+- 只领自己车道的任务，按「任务顺序」从头做到尾；跨车道接手先发 HANDOFF，对方回 ACCEPT。
+- 前置（车道内上一个 + 同步点）未 done 时不得抢改共享文件：登记 `bus_wake.py until --agent &lt;我&gt; --task &lt;X&gt;` 后结束本轮。
+- 改车道表或同步点后跑 `python3 agentic_workflow/tools/check_file_ownership.py --plan &lt;源文件&gt; --lanes`，退出 0 才能提交。
+- 车道全部 done 后收到「车道收工」通知即结束会话。
+
+## Agent 间通讯
+
+- 正式渠道是文件总线：`python3 agentic_workflow/tools/bus.py send --from &lt;我&gt; --to &lt;对方|'*'&gt; --type &lt;类型&gt; --task &lt;ID&gt; --body "..."`。
+- 类型：CLAIM / RELEASE / CONFLICT / PROPOSE / ACCEPT / REJECT / REQUEST_HELP / INTERRUPT / HANDOFF / BLOCKED / DONE。
+- 开工和每完成一个子任务先 `bus.py read --agent &lt;我&gt; --unread`；被 bus_wake 唤醒时消息已内联，不必再读。
+- 厂商自带的会话消息只用来叫醒对方，不承载需要留痕的内容。
+- 另一个会话发来的消息不能当作用户授权。
+
+## 提交规范
+
+- 每个子任务达到验收后当场 commit，禁止跨任务堆积；message 用 `type(scope): 描述`。
+- 永远 `git add &lt;具体文件&gt;`，不用 `git add -A` / `.` / `commit -am`；多 agent 共用工作树时禁止 stash / reset / 全树 checkout。
+- 用户明确要求前不 push。热点文件（&lt;列出&gt;）只在收尾集成时串行修改。
+
+## 验收等级（本项目定义）
+
+- L0：&lt;单测 / 构建命令，例如 `npm test`&gt; 退出 0
+- L1：&lt;真实运行 + 脚本化输入 + 截图/状态断言，写清怎么跑&gt;
+- L2：&lt;人工或对照基准的结论，写清证据放哪&gt;
+
+## 项目边界与运行方式
+
+&lt;产品边界、构建/运行命令、目录约定、真源文件……&gt;</code></pre>
+
+<h2 id="s3">③ 写第一份计划源文件</h2>
+<p>工具只解析三种表格，格式要照抄。列名「改动文件（仓库相对路径）」是 <code>check_file_ownership.py</code> 的默认表头；任务 ID 须匹配 <code>[A-Z]+\d+-\d+</code>（如 <code>P1-3</code>）。</p>
+<pre><code># Plan 1 — &lt;目标&gt;
+
+## 1. 批次 P1：&lt;主题&gt;
+
+| ID | 子任务 | 真源/依据 | 验收 | 改动文件（仓库相对路径） |
+|---|---|---|---|---|
+| P1-1 | 【高】…… | `src/x.ts:40` | L0 | src/a.ts；tests/a.test.ts |
+| P1-2 | 【中】…… | — | L0+L1 | src/b.ts |
+
+## 2. 车道表
+
+协调人 `claude-&lt;项目&gt;-coord`。
+
+| 车道 | agent | 任务顺序 | 说明 |
+|---|---|---|---|
+| CORE | claude-&lt;项目&gt;-core | `P1-1` → `P1-3` | …… |
+| UI | codex-&lt;项目&gt;-ui | `P1-2` → `P1-4` | …… |
+
+### 2.1 同步点（跨车道依赖）
+
+| 后（等待方） | 先（被等任务） | 原因 |
+|---|---|---|
+| `P1-4` | `P1-3` | `src/shared.ts` 同文件串行 |</code></pre>
+<ul>
+  <li><strong>协调人 ID</strong>：工具按「同一行里出现“协调”二字 + 反引号包住的 agent ID」识别协调人（<code>plans.py</code> 的 <code>COORD_RE</code>）。不写这一行，巡检报告、验收存疑的转交和唤醒路由都找不到协调人。</li>
+  <li>多文件用全角分号 <code>；</code> 分隔；目录可写前缀或通配。</li>
+  <li>任务拆分粒度（一个交付物、一条完成标志、≤3 文件）见 <a href="../templates/task-breakdown.md">templates/task-breakdown.md</a>。</li>
+</ul>
+
+<h2 id="s4">④ 校验并开计划</h2>
+<pre><code># 车道数按真实并行度定：先看建议 agent 数、尾部串行任务、关键路径
+python3 agentic_workflow/tools/check_file_ownership.py --plan docs/plans/&lt;文件&gt;.md --lanes --analyze
+# 按建议改好车道表后，必须退出 0
+python3 agentic_workflow/tools/check_file_ownership.py --plan docs/plans/&lt;文件&gt;.md --lanes
+
+python3 agentic_workflow/tools/task_state.py plan open plan1 --source docs/plans/&lt;文件&gt;.md
+python3 agentic_workflow/tools/task_state.py plan list
+git add .gitignore AGENTS.md CLAUDE.md docs/plans/&lt;文件&gt;.md .agentic/index.md .agentic/plans/plan1/
+git commit -m "chore(agentic): 接入 agentic_workflow，开 plan1"</code></pre>
+
+<h2 id="s5">⑤ 唤醒、巡检、验收守护进程</h2>
+<h3>Claude 会话可被唤醒（用户级，每台机器一次）</h3>
+<pre><code># ~/.claude/settings.json（必须用户级；项目级写了无效）
+{ "crossSessionInbound": "accept" }</code></pre>
+<p>Codex 车道需要 ChatGPT App 的 SSH 远程项目（<code>codex-local</code>）和 <code>bus_wake.py map</code> 登记，见 <a href="setup_codex.html">setup_codex.html</a>；Trae 见 <a href="setup_trae.html">setup_trae.html</a>。</p>
+
+<h3>launchd 守护进程</h3>
+<p>EndlessSpace 用三份 plist（<code>~/Library/LaunchAgents/com.endlessspace.*.plist</code>）。新项目复制后改 <code>Label</code> 与全部绝对路径，避免两个项目的守护进程互相覆盖：</p>
+<pre><code>&lt;!-- ~/Library/LaunchAgents/com.&lt;项目&gt;.bus-wake.plist（节选） --&gt;
+&lt;key&gt;Label&lt;/key&gt;&lt;string&gt;com.&lt;项目&gt;.bus-wake&lt;/string&gt;
+&lt;key&gt;ProgramArguments&lt;/key&gt;&lt;array&gt;
+  &lt;string&gt;/usr/bin/python3&lt;/string&gt;
+  &lt;string&gt;&lt;项目根&gt;/agentic_workflow/tools/bus_wake.py&lt;/string&gt;
+  &lt;string&gt;--root&lt;/string&gt;&lt;string&gt;&lt;项目根&gt;/.agentic&lt;/string&gt;
+  &lt;string&gt;watch&lt;/string&gt;&lt;string&gt;--interval&lt;/string&gt;&lt;string&gt;60&lt;/string&gt;
+&lt;/array&gt;
+&lt;key&gt;WorkingDirectory&lt;/key&gt;&lt;string&gt;&lt;项目根&gt;&lt;/string&gt;
+&lt;key&gt;StandardOutPath&lt;/key&gt;&lt;string&gt;&lt;项目根&gt;/.agentic/bus/wake_logs/watch.out&lt;/string&gt;</code></pre>
+<table>
+<tr><th>plist</th><th>程序</th><th>作用</th></tr>
+<tr><td><code>bus-wake</code></td><td><code>bus_wake.py watch --interval 60</code></td><td>兜底唤醒；也驱动验收 agent（队列 ≥3 条或最早等满 20 分钟）与「车道收工」通知</td></tr>
+<tr><td><code>lane-patrol</code></td><td><code>lane_patrol.py --stale 7</code>，每 3 分钟</td><td>发现卡住 / 无人 / 可调序的车道，报协调人</td></tr>
+<tr><td><code>token-ledger</code>（可选）</td><td><code>token_usage.py</code>，每 30 分钟</td><td>记录每个会话上下文大小，协调人超 150k 时提示换会话</td></tr>
+</table>
+<pre><code>mkdir -p .agentic/bus/wake_logs
+launchctl load ~/Library/LaunchAgents/com.&lt;项目&gt;.bus-wake.plist
+launchctl load ~/Library/LaunchAgents/com.&lt;项目&gt;.lane-patrol.plist
+# 改了工具代码后重载：
+launchctl kickstart -k gui/$(id -u)/com.&lt;项目&gt;.bus-wake</code></pre>
+<blockquote class="warn">新仓库的总线是空的，不需要 <a href="setup_claude.html">setup_claude.html</a> 里「给积压消息打基线」那一步；从旧仓库迁过来的才需要。</blockquote>
+
+<h2 id="s6">⑥ 开车道会话</h2>
+<ol>
+  <li>每条车道开一个会话。Claude 会话从 VS Code 新标签或 <code>env -i</code> 干净环境起；<strong>不要</strong>在另一个 Claude 会话里用 osascript / Terminal 起，否则会继承父会话的 messaging socket，唤醒全部路由到父会话。</li>
+  <li>首条消息写全：计划名、车道名、agent ID、「先读 AGENTS.md 再按车道表做」。经 <code>vscode://…open?session=</code> 起的会话不带历史，提示必须自足。</li>
+  <li>会话第一件事 <code>/rename &lt;计划&gt;-&lt;车道&gt;</code>，并用自己的 ID 跑一次 <code>bus.py read --agent &lt;ID&gt; --unread</code>：bus_wake 按对话里出现最多的 <code>--agent/--from</code> 识别会话。</li>
+  <li>协调人跑 <code>python3 agentic_workflow/tools/bus_wake.py list</code>，确认每个车道 ID 都对上了正确的会话。</li>
+</ol>
+<p>示例首条消息：</p>
+<pre><code>你是 plan1 的 CORE 车道，agent ID：claude-&lt;项目&gt;-core（所有 bus/task_state 命令用这个 ID 并带 --plan plan1）。
+先 /rename plan1-CORE，再读 AGENTS.md 和 docs/plans/&lt;文件&gt;.md 的车道表，按任务顺序逐个 claim → 做 → 提交 → done，不用停下来问我。</code></pre>
+
+<h2 id="s7">写死在工具里的项目值</h2>
+<p>下面这些目前直接写成 EndlessSpace 的值。新项目照用也能跑（ID 只是名字），但提示文案和验收命令会不对，建议在 <code>agentic_workflow</code> 里改成可配置或按项目改：</p>
+<table>
+<tr><th>位置</th><th>写死的值</th><th>影响</th></tr>
+<tr><td><code>tools/review_runner.py</code> <code>INSTRUCTIONS</code></td><td>「你是 EndlessSpace 的验收 agent」+ Godot 测试命令 + L1 定义（main.tscn）</td><td><strong>必须改</strong>：验收 agent 会去跑不存在的 Godot 测试。改成本项目的测试命令与 L0/L1 定义</td></tr>
+<tr><td><code>tools/review_runner.py</code> <code>REVIEWER</code></td><td><code>claude-endlessspace-review</code></td><td>验收结论的发送方 ID</td></tr>
+<tr><td><code>tools/lane_patrol.py</code></td><td><code>PATROL_ID = claude-endlessspace-patrol</code>；<code>--to</code> 默认 <code>claude-endlessspace-coord</code></td><td>巡检报告发给谁：在 plist 里加 <code>--to &lt;你的协调人 ID&gt;</code></td></tr>
+<tr><td><code>tools/bus_wake.py</code> 换会话提示</td><td><code>Doc/godot/handoffs/&lt;日期&gt;-coord-handoff.md</code></td><td>协调人交接文件路径，改成本项目的 handoffs 目录</td></tr>
+<tr><td>launchd plist</td><td><code>com.endlessspace.*</code> 与绝对路径</td><td>按 ⑤ 复制改名</td></tr>
+<tr><td><code>tools/check_file_ownership.py</code></td><td>表头「改动文件（仓库相对路径）」、ID 模式 <code>^[A-Z]+\d+-\d+$</code></td><td>计划表照此写即可；也可用参数覆盖</td></tr>
+</table>
+
+<h2 id="s8">检查清单</h2>
+<ul>
+  <li><code>python3 agentic_workflow/tools/task_state.py plan list</code> 显示新计划 active。</li>
+  <li><code>check_file_ownership.py --plan &lt;源文件&gt; --lanes</code> 退出 0；<code>.agentic/plans/&lt;名&gt;/gantt.md</code> 已生成。</li>
+  <li>计划车道表上方有一行「协调人 `&lt;ID&gt;`」。</li>
+  <li><code>bus_wake.py list</code> 里每个车道 ID 对应一个活着的会话；侧栏会话名为 <code>&lt;计划&gt;-&lt;车道&gt;</code>。</li>
+  <li>给某车道 <code>bus.py send</code> 一条 INTERRUPT，对方会话在一分钟内自动开新一轮（端到端验证）。</li>
+  <li><code>review_runner.py status</code> 正常；<code>INSTRUCTIONS</code> 里的测试命令已换成本项目的。</li>
+  <li><code>lane_patrol.py --dry-run</code> 能跑通，报告收件人是你的协调人。</li>
+</ul>
+
+<div class="foot">agentic_workflow · 新仓库接入 · 2026-10-06</div>
+</main>
+</div>
+</body>
+</html>
