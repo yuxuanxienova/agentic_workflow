@@ -7,6 +7,8 @@ bus_wake 只在有消息时叫醒会话；车道若卡住却不发消息，协�
 
 检查项（每个 active 计划、每条车道）：
   无人      车道还有未终结任务，但它的 agent 没有在线会话（Claude 自动发现 / Codex wake_map）。
+  挂起      任务进入 active/verify 已超过 --stale 分钟，负责它的会话此刻空闲（按任务计时，不受被唤醒回一句
+            「待命」之类的留痕重置）；附上它登记的条件唤醒与最后一条相关消息，方便协调人判断在等谁。
   停滞      车道有 active/verify 任务，会话空闲，且该 agent 超过 --stale 分钟没有任何事件/总线消息。
   空转      车道没有进行中的任务、下一个任务（车道顺序第一个未终结）同步点已满足，会话空闲且超时。
   可调序    下一个任务卡在别的车道，但后面有同步点已满足的任务，会话空闲且超时（交协调人判断）。
@@ -93,6 +95,31 @@ def last_activity(root: Path) -> dict[str, datetime]:
     return seen
 
 
+def waiting_hint(root: Path, agent: str, task: str) -> str:
+    """它登记的条件唤醒 + 它最后一条提到该任务的总线消息（截断），帮协调人判断在等谁。"""
+    parts = []
+    try:
+        import wake_routing
+        cond = wake_routing.load_conditions(root).get(agent)
+        if cond:
+            parts.append(f"登记在等 {'、'.join(cond.get('tasks', []))} → {cond.get('state', 'done')}")
+    except Exception:  # noqa: BLE001
+        pass
+    by_id = by_body = None  # 优先 task_id 就是该任务的消息，没有才退到正文提及
+    for message in iter_jsonl(log_path(root)):
+        if message.get("from") != agent:
+            continue
+        if message.get("task_id") == task:
+            by_id = message
+        elif task in (message.get("body") or ""):
+            by_body = message
+    last = by_id or by_body
+    if last:
+        body = (last.get("body") or "").replace("\n", " ")
+        parts.append(f"最后说（#{last.get('seq')} {last.get('type')}）：{body[:120]}{'…' if len(body) > 120 else ''}")
+    return "；" + "；".join(parts) if parts else ""
+
+
 def plan_findings(root: Path, now: datetime, stale_min: int, status: dict[str, str],
                   activity: dict[str, datetime]) -> list[str]:
     findings: list[str] = []
@@ -105,8 +132,11 @@ def plan_findings(root: Path, now: datetime, stale_min: int, status: dict[str, s
         for edge in lanes_mod.parse_sync(doc):
             sync_preds.setdefault(edge["after"], set()).update(edge["before"])
         states: dict[str, str] = {}
+        since: dict[str, datetime] = {}  # 任务进入当前状态的时间
         for event in iter_jsonl(pdir / "events.jsonl"):
             if event.get("task") and event.get("to"):
+                if states.get(event["task"]) != event["to"]:
+                    since[event["task"]] = parse_ts(event.get("ts")) or now
                 states[event["task"]] = event["to"]
         done = {t for t, s in states.items() if s in TERMINAL}
 
@@ -129,7 +159,13 @@ def plan_findings(root: Path, now: datetime, stale_min: int, status: dict[str, s
                 findings.append(f"无人：{tag} 还有 {len(open_tasks)} 个未终结任务（{', '.join(open_tasks[:4])}…），没有在线会话")
                 continue
             in_progress = [t for t in open_tasks if states.get(t) in IN_PROGRESS]
-            if in_progress and idle and quiet:
+            hung = [t for t in in_progress if idle and since.get(t)
+                    and (now - since[t]).total_seconds() > stale_min * 60]
+            for task in hung:
+                minutes = int((now - since[task]).total_seconds() // 60)
+                findings.append(f"挂起：{tag} 的 {task} 已 {states[task]} {minutes} 分钟，会话空闲"
+                                f"{waiting_hint(root, agent, task)}")
+            if in_progress and idle and quiet and not hung:
                 findings.append(f"停滞：{tag} 有进行中任务 {', '.join(in_progress)}，会话空闲且{quiet_text}")
             for task in open_tasks:
                 if states.get(task) == "blocked" and sync_preds.get(task) and ready(task):
