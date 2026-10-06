@@ -79,14 +79,14 @@
     <li><a href="#s4">④ 校验并开计划</a></li>
     <li><a href="#s5">⑤ 唤醒、巡检、验收守护进程</a></li>
     <li><a href="#s6">⑥ 开车道会话</a></li>
-    <li><a href="#s7">写死在工具里的项目值</a></li>
+    <li><a href="#s7">项目配置 config.json</a></li>
     <li><a href="#s8">检查清单</a></li>
   </ol>
 </nav>
 
 <main>
 <h1>新仓库接入指南</h1>
-<p class="lede">在一个新项目里从零接入整套多 agent 协作：入口文件（AGENTS.md）、计划源文件、任务状态、消息总线、自动唤醒、巡检与验收 agent。本页给出可直接复制的 AGENTS.md 模板和计划模板，并列出目前写死为 EndlessSpace 的工具参数。</p>
+<p class="lede">在一个新项目里从零接入整套多 agent 协作：入口文件（AGENTS.md）、计划源文件、任务状态、消息总线、自动唤醒、巡检与验收 agent。本页给出可直接复制的 AGENTS.md 模板和计划模板，项目差异集中在 <code>.agentic/config.json</code>，工具不写死项目值。</p>
 <div class="meta">基于 EndlessSpace plan1–plan6 的实际配置整理 · macOS · 2026-10-06</div>
 
 <h2 id="s0">总览与顺序</h2>
@@ -96,7 +96,7 @@
 <tr><td>② 写入口文件</td><td><code>AGENTS.md</code> + <code>CLAUDE.md</code> / <code>.trae/rules/project.md</code> 转发</td><td><span class="tag ok">必需</span></td></tr>
 <tr><td>③ 写计划源文件</td><td><code>docs/plans/&lt;日期&gt;-&lt;名&gt;.md</code>（任务表 + 车道表 + 同步点）</td><td><span class="tag ok">必需</span></td></tr>
 <tr><td>④ 校验并开计划</td><td><code>.agentic/plans/&lt;名&gt;/</code></td><td><span class="tag ok">必需</span></td></tr>
-<tr><td>⑤ 守护进程</td><td>launchd：bus-wake / lane-patrol（可选 token-ledger）</td><td>多车道并行时必需</td></tr>
+<tr><td>⑤ 配置 + 守护进程</td><td><code>.agentic/config.json</code>；<code>install_daemons.py</code> 装 bus-wake / lane-patrol</td><td>多车道并行时必需</td></tr>
 <tr><td>⑥ 开车道会话</td><td>每车道一个会话，侧栏名 <code>&lt;计划&gt;-&lt;车道&gt;</code></td><td><span class="tag ok">必需</span></td></tr>
 </table>
 <blockquote>只有一两个 agent、不需要自动唤醒时，做 ①–④ 就能用：<code>task_state.py</code> 跟踪状态，<code>bus.py</code> 留痕，人手动叫醒会话。</blockquote>
@@ -238,28 +238,18 @@ git commit -m "chore(agentic): 接入 agentic_workflow，开 plan1"</code></pre>
 <p>Codex 车道需要 ChatGPT App 的 SSH 远程项目（<code>codex-local</code>）和 <code>bus_wake.py map</code> 登记，见 <a href="setup_codex.html">setup_codex.html</a>；Trae 见 <a href="setup_trae.html">setup_trae.html</a>。</p>
 
 <h3>launchd 守护进程</h3>
-<p>EndlessSpace 用三份 plist（<code>~/Library/LaunchAgents/com.endlessspace.*.plist</code>）。新项目复制后改 <code>Label</code> 与全部绝对路径，避免两个项目的守护进程互相覆盖：</p>
-<pre><code>&lt;!-- ~/Library/LaunchAgents/com.&lt;项目&gt;.bus-wake.plist（节选） --&gt;
-&lt;key&gt;Label&lt;/key&gt;&lt;string&gt;com.&lt;项目&gt;.bus-wake&lt;/string&gt;
-&lt;key&gt;ProgramArguments&lt;/key&gt;&lt;array&gt;
-  &lt;string&gt;/usr/bin/python3&lt;/string&gt;
-  &lt;string&gt;&lt;项目根&gt;/agentic_workflow/tools/bus_wake.py&lt;/string&gt;
-  &lt;string&gt;--root&lt;/string&gt;&lt;string&gt;&lt;项目根&gt;/.agentic&lt;/string&gt;
-  &lt;string&gt;watch&lt;/string&gt;&lt;string&gt;--interval&lt;/string&gt;&lt;string&gt;60&lt;/string&gt;
-&lt;/array&gt;
-&lt;key&gt;WorkingDirectory&lt;/key&gt;&lt;string&gt;&lt;项目根&gt;&lt;/string&gt;
-&lt;key&gt;StandardOutPath&lt;/key&gt;&lt;string&gt;&lt;项目根&gt;/.agentic/bus/wake_logs/watch.out&lt;/string&gt;</code></pre>
-<table>
-<tr><th>plist</th><th>程序</th><th>作用</th></tr>
-<tr><td><code>bus-wake</code></td><td><code>bus_wake.py watch --interval 60</code></td><td>兜底唤醒；也驱动验收 agent（队列 ≥3 条或最早等满 20 分钟）与「车道收工」通知</td></tr>
-<tr><td><code>lane-patrol</code></td><td><code>lane_patrol.py --stale 7</code>，每 3 分钟</td><td>发现卡住 / 无人 / 可调序的车道，报协调人</td></tr>
-<tr><td><code>token-ledger</code>（可选）</td><td><code>token_usage.py</code>，每 30 分钟</td><td>记录每个会话上下文大小，协调人超 150k 时提示换会话</td></tr>
-</table>
-<pre><code>mkdir -p .agentic/bus/wake_logs
-launchctl load ~/Library/LaunchAgents/com.&lt;项目&gt;.bus-wake.plist
-launchctl load ~/Library/LaunchAgents/com.&lt;项目&gt;.lane-patrol.plist
+<p>由 <code>install_daemons.py</code> 按 config.json 生成，标签为 <code>&lt;launchd_prefix&gt;.&lt;名字&gt;</code>，路径从仓库根推导，不用手写 plist：</p>
+<pre><code>python3 agentic_workflow/tools/install_daemons.py --dry-run      # 先看生成的 plist
+python3 agentic_workflow/tools/install_daemons.py [--with-ledger] # 写入 ~/Library/LaunchAgents 并加载
+python3 agentic_workflow/tools/install_daemons.py --uninstall    # 卸载
 # 改了工具代码后重载：
-launchctl kickstart -k gui/$(id -u)/com.&lt;项目&gt;.bus-wake</code></pre>
+launchctl kickstart -k gui/$(id -u)/com.&lt;project&gt;.bus-wake</code></pre>
+<table>
+<tr><th>名字</th><th>程序</th><th>作用</th></tr>
+<tr><td><code>bus-wake</code></td><td><code>bus_wake.py watch --interval 60</code>（常驻）</td><td>兜底唤醒；驱动验收 agent（队列 ≥3 条或最早等满 20 分钟）与「车道收工」通知</td></tr>
+<tr><td><code>lane-patrol</code></td><td><code>lane_patrol.py --stale 7</code>，每 3 分钟</td><td>发现卡住 / 无人 / 可调序的车道，报给计划里写明的协调人</td></tr>
+<tr><td><code>token-ledger</code>（<code>--with-ledger</code>）</td><td><code>token_usage.py</code>，每 30 分钟</td><td>记录会话上下文大小，协调人超 150k 时提示换会话</td></tr>
+</table>
 <blockquote class="warn">新仓库的总线是空的，不需要 <a href="setup_claude.html">setup_claude.html</a> 里「给积压消息打基线」那一步；从旧仓库迁过来的才需要。</blockquote>
 
 <h2 id="s6">⑥ 开车道会话</h2>
@@ -273,17 +263,32 @@ launchctl kickstart -k gui/$(id -u)/com.&lt;项目&gt;.bus-wake</code></pre>
 <pre><code>你是 plan1 的 CORE 车道，agent ID：claude-&lt;项目&gt;-core（所有 bus/task_state 命令用这个 ID 并带 --plan plan1）。
 先 /rename plan1-CORE，再读 AGENTS.md 和 docs/plans/&lt;文件&gt;.md 的车道表，按任务顺序逐个 claim → 做 → 提交 → done，不用停下来问我。</code></pre>
 
-<h2 id="s7">写死在工具里的项目值</h2>
-<p>下面这些目前直接写成 EndlessSpace 的值。新项目照用也能跑（ID 只是名字），但提示文案和验收命令会不对，建议在 <code>agentic_workflow</code> 里改成可配置或按项目改：</p>
+<h2 id="s7">项目配置 .agentic/config.json</h2>
+<p>各项目不同的值集中在 <code>.agentic/config.json</code>（入库），工具代码里不写死任何项目名。不写这个文件也能跑：缺省值全部由仓库目录名推导。</p>
+<pre><code>python3 agentic_workflow/tools/project_config.py init   # 写一份带缺省值的 config.json
+python3 agentic_workflow/tools/project_config.py show   # 查看生效配置</code></pre>
 <table>
-<tr><th>位置</th><th>写死的值</th><th>影响</th></tr>
-<tr><td><code>tools/review_runner.py</code> <code>INSTRUCTIONS</code></td><td>「你是 EndlessSpace 的验收 agent」+ Godot 测试命令 + L1 定义（main.tscn）</td><td><strong>必须改</strong>：验收 agent 会去跑不存在的 Godot 测试。改成本项目的测试命令与 L0/L1 定义</td></tr>
-<tr><td><code>tools/review_runner.py</code> <code>REVIEWER</code></td><td><code>claude-endlessspace-review</code></td><td>验收结论的发送方 ID</td></tr>
-<tr><td><code>tools/lane_patrol.py</code></td><td><code>PATROL_ID = claude-endlessspace-patrol</code>；<code>--to</code> 默认 <code>claude-endlessspace-coord</code></td><td>巡检报告发给谁：在 plist 里加 <code>--to &lt;你的协调人 ID&gt;</code></td></tr>
-<tr><td><code>tools/bus_wake.py</code> 换会话提示</td><td><code>Doc/godot/handoffs/&lt;日期&gt;-coord-handoff.md</code></td><td>协调人交接文件路径，改成本项目的 handoffs 目录</td></tr>
-<tr><td>launchd plist</td><td><code>com.endlessspace.*</code> 与绝对路径</td><td>按 ⑤ 复制改名</td></tr>
-<tr><td><code>tools/check_file_ownership.py</code></td><td>表头「改动文件（仓库相对路径）」、ID 模式 <code>^[A-Z]+\d+-\d+$</code></td><td>计划表照此写即可；也可用参数覆盖</td></tr>
+<tr><th>键</th><th>缺省</th><th>谁用</th></tr>
+<tr><td><code>project</code></td><td>仓库目录名小写</td><td>派生下面的 ID 与 launchd 标签</td></tr>
+<tr><td><code>display_name</code></td><td>仓库目录名</td><td>验收 agent 提示词</td></tr>
+<tr><td><code>coordinator</code></td><td><code>claude-&lt;project&gt;-coord</code></td><td>巡检报告兜底收件人（计划里「协调 `ID`」优先）</td></tr>
+<tr><td><code>reviewer_id</code> / <code>patrol_id</code></td><td><code>claude-&lt;project&gt;-review</code> / <code>-patrol</code></td><td>验收结论 / 巡检报告的发送方</td></tr>
+<tr><td><code>handoff_dir</code></td><td><code>docs/handoffs</code></td><td>协调人换会话提示里的交接文件目录</td></tr>
+<tr><td><code>launchd_prefix</code></td><td><code>com.&lt;project&gt;</code></td><td><code>install_daemons.py</code></td></tr>
+<tr><td><code>review.test_command</code></td><td>空（验收 agent 只看 diff 与证据，不跑测试）</td><td>验收 agent 在临时 worktree 里跑的测试命令，<strong>建议填</strong></td></tr>
+<tr><td><code>review.levels</code></td><td>通用 L0/L1/L2 定义</td><td>验收 agent 判断等级依据</td></tr>
 </table>
+<p>EndlessSpace 的配置（参考）：</p>
+<pre><code>{
+  "project": "endlessspace",
+  "display_name": "EndlessSpace",
+  "handoff_dir": "Doc/godot/handoffs",
+  "review": {
+    "test_command": "HOME=$(mktemp -d) ES_PERSONS=off /Applications/Godot.app/Contents/MacOS/Godot --headless --path Godot --script res://tests/test_runner.gd",
+    "levels": "L0 = 单测 / verify；L1 = 真实 main.tscn 渲染 + 输入脚本 + 截图与状态断言"
+  }
+}</code></pre>
+<p>验收 agent 的项目规矩部分仍从 <code>AGENTS.md</code> 的验收章节原文摘取，不需要配置。</p>
 
 <h2 id="s8">检查清单</h2>
 <ul>
@@ -292,8 +297,8 @@ launchctl kickstart -k gui/$(id -u)/com.&lt;项目&gt;.bus-wake</code></pre>
   <li>计划车道表上方有一行「协调人 `&lt;ID&gt;`」。</li>
   <li><code>bus_wake.py list</code> 里每个车道 ID 对应一个活着的会话；侧栏会话名为 <code>&lt;计划&gt;-&lt;车道&gt;</code>。</li>
   <li>给某车道 <code>bus.py send</code> 一条 INTERRUPT，对方会话在一分钟内自动开新一轮（端到端验证）。</li>
-  <li><code>review_runner.py status</code> 正常；<code>INSTRUCTIONS</code> 里的测试命令已换成本项目的。</li>
-  <li><code>lane_patrol.py --dry-run</code> 能跑通，报告收件人是你的协调人。</li>
+  <li><code>project_config.py show</code> 输出的 ID、交接目录、<code>review.test_command</code> 都是本项目的。</li>
+  <li><code>lane_patrol.py --dry-run</code> 能跑通；<code>install_daemons.py --dry-run</code> 的标签与路径正确。</li>
 </ul>
 
 <div class="foot">agentic_workflow · 新仓库接入 · 2026-10-06</div>

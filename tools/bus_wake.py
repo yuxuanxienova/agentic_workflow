@@ -326,6 +326,14 @@ def trae_agent(root: Path) -> str | None:
     return (name_file.read_text().strip() if name_file.exists() else "") or "trae-1"
 
 
+def handoff_dir(root: Path) -> str:
+    try:
+        import project_config
+        return project_config.load(root)["handoff_dir"].rstrip("/")
+    except Exception:  # noqa: BLE001  配置坏了也照常唤醒
+        return "docs/handoffs"
+
+
 def repo_root(root: Path) -> Path:
     return root.resolve().parent
 
@@ -381,7 +389,7 @@ def wake_text(root: Path, agent: str, messages: list[dict], view, gate: dict | N
             ctx = 0
         if ctx > token_usage.ROTATE_CTX:
             text += (f"\n上下文（1d）：你的会话上下文已约 {ctx // 1000}k token，每次调用都在重放它。处理完本轮后把"
-                     "未结事项写进 Doc/godot/handoffs/<日期>-coord-handoff.md，然后请用户开新会话接任"
+                     f"未结事项写进 {handoff_dir(root)}/<日期>-coord-handoff.md，然后请用户开新会话接任"
                      "（沿用同一协调人 ID，新会话先读交接文件）。")
     try:
         import plans as plans_mod

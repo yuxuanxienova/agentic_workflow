@@ -36,8 +36,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bus import bus_dir, default_root  # noqa: E402
+import project_config  # noqa: E402
 
-REVIEWER = "claude-endlessspace-review"
 MODEL = os.environ.get("AGENTIC_REVIEW_MODEL", "claude-sonnet-5-5")
 EFFORT = os.environ.get("AGENTIC_REVIEW_EFFORT", "low")
 BATCH = 3                    # 攒满几条验收一次
@@ -79,21 +79,17 @@ SCHEMA = {
     "required": ["results"],
 }
 
-INSTRUCTIONS = """你是 EndlessSpace 的验收 agent（{reviewer}）。下面是一批已经 done 的任务，逐个验收，按 JSON schema 输出结论。
+INSTRUCTIONS = """你是 {project} 的验收 agent（{reviewer}）。下面是一批已经 done 的任务，逐个验收，按 JSON schema 输出结论。
 
 验收要点：
 - 提交是否实现了规格（对照「规格」与「登记改动文件」），有没有明显 bug、回归、范围外改动。
-- 备注写的验收等级是否有依据（L0 = 单测 / verify；L1 = 真实 main.tscn 渲染 + 输入脚本 + 截图与状态断言）；
+- 备注写的验收等级是否有依据（{levels}）；
   「L2 待」「L1 待」这类如实写明的缺口不算打回理由，备注造假或等级没依据才算。
 - 机械检查提示（如果有）列出的问题是否真的存在。
 
 工作约束：
 - 主工作树只读：不得编辑文件、不得 git add / commit / checkout / stash / reset，其它 agent 在同一工作树里干活。
-- 需要跑测试时，在临时 worktree 里跑：
-    wt=$(mktemp -d)/wt && git worktree add --detach "$wt" <提交SHA> && cd "$wt" &&
-    HOME=$(mktemp -d) ES_PERSONS=off /Applications/Godot.app/Contents/MacOS/Godot --headless --path Godot --script res://tests/test_runner.gd
-  用完 `git worktree remove --force "$wt"`。只在 diff 涉及逻辑、且备注里的测试证据不足以判断时才跑；纯数据/文档/表现微调看 diff 即可。
-- 判断标准：pass = 实现了规格且没发现代码/证据问题；reject = 代码或验收证据有具体、可修的问题（fix 里写清楚要改什么）；
+{test_block}- 判断标准：pass = 实现了规格且没发现代码/证据问题；reject = 代码或验收证据有具体、可修的问题（fix 里写清楚要改什么）；
   计划登记遗漏、备注措辞这类纯文书问题不打回（打回会让车道返工一轮），判 pass 并在 reason 里注明；
   unsure = 需要产品/规格层面的判断，或你没法验证（reason 写清楚卡在哪），会转给协调人。
 - 每个任务都要给结论；reason 一两句中文，具体到文件/函数。
@@ -212,8 +208,28 @@ def ask_claude(repo: Path, prompt: str) -> tuple[dict | None, dict]:
     return data["structured_output"], meta
 
 
+TEST_BLOCK = """- 需要跑测试时，在临时 worktree 里跑：
+    wt=$(mktemp -d)/wt && git worktree add --detach "$wt" <提交SHA> && cd "$wt" &&
+    {command}
+  用完 `git worktree remove --force "$wt"`。只在 diff 涉及逻辑、且备注里的测试证据不足以判断时才跑；纯数据/文档/表现微调看 diff 即可。
+"""
+NO_TEST_BLOCK = "- 本项目未配置测试命令（.agentic/config.json review.test_command）：只看 diff 与备注里的证据，不自行跑测试。\n"
+
+
+def reviewer(root: Path) -> str:
+    return project_config.load(root)["reviewer_id"]
+
+
+def build_prompt(root: Path, repo: Path, packets: str) -> str:
+    cfg = project_config.load(root)
+    cmd = cfg["review"].get("test_command", "").strip()
+    return INSTRUCTIONS.format(project=cfg["display_name"], reviewer=cfg["reviewer_id"], levels=cfg["review"]["levels"],
+                               test_block=TEST_BLOCK.format(command=cmd) if cmd else NO_TEST_BLOCK,
+                               rules=acceptance_rules(repo), packets=packets)
+
+
 def bus_send(root: Path, to: str, mtype: str, task: str, body: str, plan: str) -> None:
-    subprocess.run([sys.executable, str(TOOLS / "bus.py"), "--root", str(root), "send", "--from", REVIEWER,
+    subprocess.run([sys.executable, str(TOOLS / "bus.py"), "--root", str(root), "send", "--from", reviewer(root),
                     "--to", to, "--type", mtype, "--task", task, "--plan", plan, "--body", body],
                    capture_output=True, text=True)
 
@@ -231,7 +247,7 @@ def apply(root: Path, item: dict, result: dict) -> str:
     tests = result.get("tests_run", "").strip()
     note = reason + (f"；需修：{fix}" if fix and verdict == "reject" else "") + (f"；测试：{tests}" if tests else "")
     proc = subprocess.run([sys.executable, str(TOOLS / "task_state.py"), "--root", str(root), "--plan", plan,
-                           "review", task, "--agent", REVIEWER, "--verdict", verdict, "--note", note],
+                           "review", task, "--agent", reviewer(root), "--verdict", verdict, "--note", note],
                           capture_output=True, text=True)
     if proc.returncode != 0:
         return f"skip（{proc.stderr.strip()[:80]}）"  # 车道已自己 revoke 等：结论作废
@@ -269,8 +285,7 @@ def run(root: Path, force: bool = False) -> int:
     started = now()
     repo = root.resolve().parent
     try:
-        prompt = INSTRUCTIONS.format(reviewer=REVIEWER, rules=acceptance_rules(repo),
-                                     packets="\n\n".join(packet(root, i["plan"], i["task"]) for i in batch))
+        prompt = build_prompt(root, repo, "\n\n".join(packet(root, i["plan"], i["task"]) for i in batch))
         output, meta = ask_claude(repo, prompt)
         outcomes = {}
         if output is None:
@@ -323,8 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         repo = root.resolve().parent
         tasks = [t.strip() for t in args.task.split(",") if t.strip()]
         started = now()
-        prompt = INSTRUCTIONS.format(reviewer=REVIEWER, rules=acceptance_rules(repo),
-                                     packets="\n\n".join(packet(root, args.plan, t) for t in tasks))
+        prompt = build_prompt(root, repo, "\n\n".join(packet(root, args.plan, t) for t in tasks))
         output, meta = ask_claude(repo, prompt)
         print(json.dumps({"seconds": round(now() - started), "prompt_chars": len(prompt), **meta,
                           "output": output}, ensure_ascii=False, indent=2))

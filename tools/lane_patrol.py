@@ -35,8 +35,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lanes as lanes_mod  # noqa: E402
 import plans as plans_mod  # noqa: E402
 from bus import default_root, iter_jsonl, log_path  # noqa: E402
+import project_config  # noqa: E402
 
-PATROL_ID = "claude-endlessspace-patrol"
 STATE_NAME = "patrol_state.json"
 TERMINAL = {"done", "failed", "migrated"}
 IN_PROGRESS = {"active", "verify"}
@@ -184,12 +184,22 @@ def plan_findings(root: Path, now: datetime, stale_min: int, status: dict[str, s
     return findings
 
 
+def coordinators(root: Path, cfg: dict) -> list[str]:
+    """active 计划文档里「协调 `<ID>`」写明的协调人；都没写时退回 config.json 的 coordinator。"""
+    found: set[str] = set()
+    for _, pdir, _ in plans_mod.active_plans(root):
+        doc = pdir / plans_mod.DOC_NAME
+        if doc.is_file():
+            found |= set(plans_mod.COORD_RE.findall(doc.read_text(encoding="utf-8")))
+    return sorted(found) or [cfg["coordinator"]]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="车道巡检：找出不发消息的卡顿，有问题才通知协调人。")
     parser.add_argument("--root", type=Path, default=None, help="协调目录（默认 <git 根>/.agentic）")
     parser.add_argument("--stale", type=int, default=30, help="多少分钟无留痕算停滞（默认 30）")
     parser.add_argument("--repeat", type=int, default=120, help="同样的发现隔多少分钟再报（默认 120）")
-    parser.add_argument("--to", default="claude-endlessspace-coord", help="报告收件人（默认协调人）")
+    parser.add_argument("--to", default=None, help="报告收件人（默认：active 计划里写明的协调人，没有则用 config.json 的 coordinator）")
     parser.add_argument("--dry-run", action="store_true", help="只打印，不发总线消息")
     args = parser.parse_args(argv)
     root = Path(args.root) if args.root else default_root()
@@ -212,8 +222,10 @@ def main(argv: list[str] | None = None) -> int:
     if state.get("digest") == digest and last and (now - last).total_seconds() < args.repeat * 60:
         print("（与上次相同，未过重复间隔，不再通知）")
         return 0
-    subprocess.run([sys.executable, str(Path(__file__).with_name("bus.py")), "--root", str(root), "send",
-                    "--from", PATROL_ID, "--to", args.to, "--type", "INTERRUPT", "--body", body], check=False)
+    cfg = project_config.load(root)
+    for to in [args.to] if args.to else coordinators(root, cfg):
+        subprocess.run([sys.executable, str(Path(__file__).with_name("bus.py")), "--root", str(root), "send",
+                        "--from", cfg["patrol_id"], "--to", to, "--type", "INTERRUPT", "--body", body], check=False)
     state_path.write_text(json.dumps({"digest": digest, "ts": now.isoformat(timespec="seconds")}) + "\n",
                           encoding="utf-8")
     return 0

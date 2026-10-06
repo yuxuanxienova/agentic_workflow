@@ -33,6 +33,12 @@ AI agent（Claude / Codex / GPT 等）协作，并保证**同一文件同一时�
 **并发**：task_state 与 bus 的「取 seq + 追加」都在 `flock` 排他锁内完成（`plans/<name>/.events.lock`、`bus/.bus.lock`），
 多会话同时写不会撞号。
 
+## 项目配置（`<root>/config.json`）
+
+项目差异（项目名、协调人 / 验收 / 巡检 ID、交接目录、launchd 标签前缀、验收测试命令与等级定义）都在
+`.agentic/config.json`，缺省值由仓库目录名推导，工具里不写死项目值。`project_config.py show|init`；
+`install_daemons.py [--dry-run|--uninstall]` 按它生成并加载 launchd 守护进程。详见 `doc/setup_newrepo.html`。
+
 ## 脚本
 
 ### 1. `check_file_ownership.py` — 文件所有权矩阵重叠校验
