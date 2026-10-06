@@ -133,7 +133,8 @@ class WakeRoutingTest(unittest.TestCase):
     def test_coordinator_ignores_done_but_gets_help(self):
         view = self.view()
         self.assertIsNone(wr.relevance(view, COORD, bcast(1, "DONE", A, "T1-1")))
-        self.assertIsNone(wr.relevance(view, COORD, {"seq": 2, "from": A, "to": COORD, "type": "DONE", "task_id": "T1-1"}))
+        self.assertEqual(wr.relevance(view, COORD, {"seq": 2, "from": A, "to": COORD, "type": "DONE",
+                                                     "task_id": "T1-1"}), "点对点")
         self.assertEqual(wr.relevance(view, COORD, {"seq": 3, "from": "claude-endlessspace-review", "to": COORD,
                                                      "type": "REQUEST_HELP", "task_id": "T1-1"}), "点对点")
         self.assertEqual(wr.relevance(view, A, {"seq": 4, "from": "claude-endlessspace-review", "to": A,

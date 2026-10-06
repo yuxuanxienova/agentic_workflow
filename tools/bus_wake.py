@@ -469,7 +469,8 @@ def retire_finished(root: Path) -> None:
         if agent in retired:
             continue
         text = ("【bus_wake 车道收工】你在 active 计划里的车道任务已全部 done。按规矩收尾：确认改动都已提交、"
-                "task_state 备注写清验收等级后结束本会话即可。之后与你无关的广播不会再叫醒你；"
+                "task_state 备注写清验收等级；若你还答应过别人的事（复测、答复、等协调人发令再做的活），"
+                "先给协调人发一条点对点消息说明，再结束本会话。之后与你无关的广播不会再叫醒你；"
                 "有人点对点找你时仍会叫醒。")
         if deliver(agent, target, text) == "woken":
             retired[agent] = time.strftime("%Y-%m-%d %H:%M:%S")

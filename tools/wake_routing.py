@@ -91,8 +91,8 @@ def msg_tasks(msg: dict) -> list[str]:
 def relevance(view: PlanView | None, agent: str, msg: dict, seen_conflicts: set | None = None) -> str | None:
     """相关就返回一句原因（写进唤醒摘要），不相关返回 None。"""
     mtype = msg.get("type")
-    if view is not None and agent in view.coords and mtype == "DONE":
-        return None  # 验收归验收 agent（review_runner）：协调人只收它转来的 REQUEST_HELP
+    if view is not None and agent in view.coords and mtype == "DONE" and msg.get("to") != agent:
+        return None  # 广播 DONE：验收归验收 agent；点对点 DONE 是车道有意找协调人（如请它安排复测），照常叫醒
     if msg.get("to") == agent:
         if mtype == "ACCEPT":
             return None  # 回执：下次醒来时随摘要看到，不单独叫醒
