@@ -254,8 +254,8 @@ launchctl kickstart -k gui/$(id -u)/com.&lt;project&gt;.bus-wake</code></pre>
 
 <h2 id="s6">⑥ 开车道会话</h2>
 <ol>
-  <li>每条车道开一个会话。Claude 会话从 VS Code 新标签或 <code>env -i</code> 干净环境起；<strong>不要</strong>在另一个 Claude 会话里用 osascript / Terminal 起，否则会继承父会话的 messaging socket，唤醒全部路由到父会话。</li>
-  <li>首条消息写全：计划名、车道名、agent ID、「先读 AGENTS.md 再按车道表做」。经 <code>vscode://…open?session=</code> 起的会话不带历史，提示必须自足。</li>
+  <li>每条车道开一个会话。Claude 车道一律用 <code>tools/launch_claude_lanes.py</code> 开（VS Code 空标签 + socket 投递首条提示，见 <a href="setup_claude.html#s5c">setup_claude §新开车道</a>）；<strong>不要</strong>用 <code>claude -p</code> / <code>--bg</code>（侧栏看不到）；<strong>不要</strong>在另一个 Claude 会话里用 osascript / Terminal 起，否则会继承父会话的 messaging socket，唤醒全部路由到父会话。</li>
+  <li>首条消息写全：计划名、车道名、agent ID、「先读 AGENTS.md 再按车道表做」。新标签不带历史，提示必须自足（工具已内置）。</li>
   <li>会话第一件事 <code>/rename &lt;计划&gt;-&lt;车道&gt;</code>，并用自己的 ID 跑一次 <code>bus.py read --agent &lt;ID&gt; --unread</code>：bus_wake 按对话里出现最多的 <code>--agent/--from</code> 识别会话。</li>
   <li>协调人跑 <code>python3 agentic_workflow/tools/bus_wake.py list</code>，确认每个车道 ID 都对上了正确的会话。</li>
 </ol>

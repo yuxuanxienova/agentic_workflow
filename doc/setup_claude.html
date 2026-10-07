@@ -97,7 +97,7 @@
 <tr><td>Claude 会话空闲时，能被外部叫醒吗？</td><td><span class="tag ok">能</span> 官方原生支持。每个会话都有一个收件箱 socket，空闲时收到消息会自动开新一轮</td></tr>
 <tr><td>要改 Claude Code 吗？</td><td><span class="tag ok">不用</span> 只需要在<strong>用户级</strong>设置里加一行，再配上 <code>bus_wake.py</code> 的 Claude 后端</td></tr>
 <tr><td>要像 Codex 那样登记映射吗？</td><td><span class="tag ok">不用</span> 会话和 agent ID 都是自动发现的</td></tr>
-<tr><td>在 VS Code 扩展里能用吗？</td><td><span class="tag ok">能</span> 实测 VS Code 会话和 <code>claude --bg</code> 后台会话都可以</td></tr>
+<tr><td>在 VS Code 扩展里能用吗？</td><td><span class="tag ok">能</span> 实测 VS Code 会话和 <code>claude --bg</code> 后台会话都可以；但车道必须是 VS Code 会话（侧栏可见），开法见 <a href="#s5c">§新开车道的正确做法</a></td></tr>
 <tr><td>项目级设置能代替吗？</td><td><span class="tag no">不能</span> 见坑 3：仓库级设置只能收紧、不能放宽</td></tr>
 </table></div>
 
@@ -230,7 +230,30 @@ launchctl kickstart -k gui/$(id -u)/com.endlessspace.bus-wake   # 让 watch 加�
   <li><strong>叫醒它：</strong><code>bus_wake.py watch --once</code>，或者给它发一条总线消息。</li>
 </ol>
 <blockquote class="warn"><strong>坑：会话以为自己是被替换掉的旧会话。</strong>交接消息如果写成「交给新的 VS Code 会话」，被搬过去的会话会理解成「有另一个会话来接手了」，于是礼貌地停手。交接消息要写成：<em>「你就是被搬进 VS Code 的同一个会话，继续干」</em>。</blockquote>
-<p><strong>以后新开车道，更省事的做法：</strong>不用 <code>--bg</code>。先用 <code>claude -p "&lt;车道启动提示，最后只回复『待命』&gt;" --permission-mode bypassPermissions</code> 跑完第一轮（这一轮会写出对话记录，记录里有 <code>--agent</code>，bus_wake 就能认出它），再用 <code>open "vscode://anthropic.claude-code/open?session=&lt;id&gt;"</code> 把它放进侧栏，最后用 bus_wake 发「开工」。整个过程不需要手动粘贴。</p>
+<h3 id="s5c">新开车道的正确做法（2026-10-07 plan7 实测，扩展 2.1.290）</h3>
+<blockquote class="danger"><strong>已作废：</strong>本节旧写法「先 <code>claude -p</code> 跑首轮，再 <code>open "vscode://…/open?session=&lt;id&gt;"</code> 放进侧栏」在扩展 2.1.290 起<strong>不再可行</strong>，原因见下方「错误做法」。</blockquote>
+<p>用工具一条命令开车道（协调人会话里直接跑即可，不需要用户按回车）：</p>
+<pre><code>python3 agentic_workflow/tools/launch_claude_lanes.py --plan plan7 --lanes DATA,CONTENT,SAVE \
+    [--note DATA="上一个会话在 P49-1 留下未提交文件，先审阅接着做"]
+python3 agentic_workflow/tools/bus_wake.py list      # 每个 claude-* 车道 ID 必须对应不同 pid</code></pre>
+<p>它对每条车道串行做四步：</p>
+<ol>
+  <li><code>code -r &lt;仓库&gt;</code>：把本工作区的 VS Code 窗口置前。<code>vscode://</code> URI 只发给<strong>最后聚焦的窗口</strong>，开着多个窗口时不先置前就会落到别的工作区。</li>
+  <li><code>code --open-url "vscode://anthropic.claude-code/open"</code>（<strong>不带</strong> <code>session</code> / <code>prompt</code>）：扩展立刻新开一个标签，并起一个 <code>entrypoint=claude-vscode</code> 的会话进程，<code>~/.claude/sessions/&lt;pid&gt;.json</code> 里已有 <code>messagingSocketPath</code>，此时还没有对话记录。</li>
+  <li>找到这个新进程，用 <code>bus_wake.post_claude(socket, 车道提示)</code> 把完整首条提示写进 socket（依赖用户级 <code>crossSessionInbound=accept</code>），效果等于用户在输入框回车。提示必须自足：计划、车道、agent ID、协调人、「先读 AGENTS.md 与计划副本，status 查自己已认领的任务续做」。</li>
+  <li>首轮写出对话记录后，追加 <code>{"type":"custom-title","customTitle":"&lt;计划&gt;-&lt;车道&gt;"}</code>，侧栏显示车道名。</li>
+</ol>
+<h3 id="s5d">错误做法与原因（plan7 开工踩过，勿再犯）</h3>
+<div class="tblwrap"><table>
+<tr><th>错误做法</th><th>现象</th><th>原因</th></tr>
+<tr><td>在协调人会话的 Bash 里前台 <code>env -i … claude -p</code> 批量起车道</td><td>命令 exit 137 被杀，协调人会话本身也被拖垮，没有任何车道产出</td><td>前台长命令 + 多个子 Claude 进程超出工具时限/资源；且 <code>-p</code> 会话本来就进不了侧栏（下一行）。</td></tr>
+<tr><td><code>claude -p</code> 首轮 + <code>open "vscode://…/open?session=&lt;id&gt;"</code></td><td>会话活着、能被 bus_wake 叫醒，但侧栏看不到；<code>open?session=</code> 静默无反应，扩展日志里也没有记录</td><td>扩展 2.1.290 的会话列表<strong>过滤掉</strong>对话记录 <code>entrypoint</code> 为 <code>sdk-cli/sdk-ts/sdk-py</code> 或 <code>sessionKind</code> 为 <code>daemon/bg</code> 的会话（<code>extension.js</code> 中 <code>new Set(["sdk-cli","sdk-ts","sdk-py"])</code>）。<code>claude -p</code> 写的就是 <code>sdk-cli</code>，改不回来。</td></tr>
+<tr><td><code>claude --bg --resume &lt;id&gt;</code> 让车道接着跑</td><td>车道在后台干活，用户在 VS Code 里完全看不到</td><td><code>kind=bg</code>，同上被过滤；还会和之后打开的标签抢同一 ID。用户明确不要后台会话。注意：<strong>工具调用被用户拒绝时命令可能已经启动</strong>，事后要查 <code>~/.claude/sessions/*.json</code> 的 <code>kind</code> 并 <code>claude stop</code>（不要 <code>claude rm</code>）。</td></tr>
+<tr><td><code>open?prompt=&lt;URL 编码中文&gt;</code> 预填提示</td><td>只预填输入框，必须用户逐个回车；bash 子 shell 里 <code>urllib.parse.quote</code> 还会因 surrogate 报错，标签打开却是空的</td><td><code>prompt</code> 参数设计上不自动发送。改为空标签 + socket 投递（正确做法第 2–3 步），提示在 Python 里构造。</td></tr>
+<tr><td>用 osascript 给 VS Code 发回车</td><td>不确定焦点在哪个标签，可能打到协调人自己的输入框</td><td>不需要：空标签一打开就有 socket，直接投递即可。</td></tr>
+<tr><td>在 Claude 会话里用 osascript / Terminal 起 <code>claude</code></td><td>车道唤醒全部路由到协调人</td><td>继承父会话的 <code>CLAUDE_CODE_SESSION_ID</code> / messaging socket（旧坑，仍然成立）。</td></tr>
+</table></div>
+<p><strong>开完必核对：</strong><code>bus_wake.py list</code> 里每个车道 ID 一行、pid 互不相同、不是协调人的 pid；用户侧栏能看到 <code>&lt;计划&gt;-&lt;车道&gt;</code>。巡检在核对前发的「没有在线会话」可忽略。</p>
 
 <h2 id="s6">踩过的坑</h2>
 <div class="tblwrap"><table>

@@ -352,6 +352,7 @@ python3 agentic_workflow/tools/check_file_ownership.py --plan PLAN.md P1-1 P2-1 
   <li><b>工具</b>：<code>check_file_ownership.py --lanes</code> 校验（全覆盖 / 无环 / 跨车道共享文件已排序，否则退出 1）；<code>task_state.py claim</code> 在任务不属于自己车道、或前置未 done 时打 ⚠；<code>gantt</code> 输出「车道 × 推导波次」+ 同步点状态；<code>board</code> 带车道列。</li>
 </ol>
 <p>流程因此变成：<b>工具算链 → 人定 N → Planner 装车道 + 写同步点 → 工具校验并推导波次 → 每个 agent 拿一条车道做到底，只在同步点等人</b>。下文「矩阵」「波次」两节保留 v0.1 原文作为第一次实战的记录。</p>
+<blockquote class="warn"><strong>开车道会话（2026-10-07 plan7 教训）：</strong>Claude 车道一律用 <code>tools/launch_claude_lanes.py --plan &lt;计划&gt; --lanes A,B</code> 开——VS Code 空标签 + 向新会话 socket 投递完整首条提示，侧栏显示 <code>&lt;计划&gt;-&lt;车道&gt;</code>，无需用户按回车。<b>不要</b>用 <code>claude -p</code> / <code>claude --bg</code> 起车道：扩展 2.1.290 起侧栏过滤 <code>sdk-cli</code> 与 bg 会话，<code>open?session=</code> 静默失败，用户看不到车道；协调人 Bash 里前台批量起 <code>claude -p</code> 还会被杀并拖垮协调人。开完用 <code>bus_wake.py list</code> 核对每个车道 ID 各有独立 pid。细节与全部错误做法见 <a href="doc/setup_claude.html#s5c">setup_claude.html §新开车道</a>。Codex 车道照旧 <code>bus_wake.py spawn</code>。</blockquote>
 
 
 <h3>为什么按「功能域」分批是错的</h3>
@@ -977,6 +978,7 @@ alwaysApply: true
   <thead><tr><th>工具</th><th>一句话</th><th>典型用法</th></tr></thead>
   <tbody>
     <tr><td><code>check_file_ownership.py</code></td><td>任务集文件重叠 → 有重叠退出 1；<code>--lanes</code> 校验车道表，<code>--components</code> 打印链组</td><td><code>--plan PLAN.md --lanes</code></td></tr>
+    <tr><td><code>launch_claude_lanes.py</code></td><td>开 Claude 车道会话：VS Code 空标签 + socket 投递首条提示 + 侧栏改名（勿用 <code>claude -p</code>/<code>--bg</code>）</td><td><code>--plan plan7 --lanes DATA,UI</code></td></tr>
     <tr><td><code>lanes.py</code></td><td>车道/同步点解析、校验、波次推导（被上两个工具复用）</td><td><code>--plan PLAN.md</code></td></tr>
     <tr><td><code>agent_registry.py</code></td><td>谁在干什么、谁持有哪个文件</td><td><code>who-owns path</code> · <code>stale --ttl 900</code></td></tr>
     <tr><td><code>file_lock.py</code></td><td>文件级 CAS 锁，防两人同改一文件</td><td><code>acquire path --agent a1 --task P1-1</code></td></tr>

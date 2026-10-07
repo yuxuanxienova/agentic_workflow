@@ -110,6 +110,16 @@ python3 tools/bus.py tail --n 20
 
 退出码：`0` 成功；`2` 非法消息类型。
 
+### 4a. `launch_claude_lanes.py` — 开 Claude 车道会话
+
+```bash
+python3 tools/launch_claude_lanes.py --plan plan7 --lanes DATA,CONTENT [--note DATA="…"]
+```
+
+每条车道：`code -r <仓库>` 置前窗口 → `code --open-url vscode://anthropic.claude-code/open`（空标签，立刻有 socket）
+→ `bus_wake.post_claude` 投递完整车道提示 → 追加 custom-title `<计划>-<车道>`。**不要用 `claude -p` / `--bg` 开车道**：
+扩展 2.1.290 起侧栏过滤 `sdk-cli` 与 bg 会话，用户看不到。详见 `doc/setup_claude.html#s5c`。
+
 ### 4b. `bus_wake.py` — 总线唤醒器（Codex）
 
 收件箱有新消息且会话空闲时，经本机共享 app-server daemon 给 Codex 会话注入一轮「去读收件箱」，
