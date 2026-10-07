@@ -175,6 +175,10 @@ def cmd_send(args) -> int:
         if bad_agent_id(agent):
             print(f"非法 agent ID {role}「{agent}」：须为 <厂商>-<会话/实例>[/<子agent>]，如 claude-endlessspace-d5", file=sys.stderr)
             return 2
+    body = args.body or ""
+    if body.lstrip().startswith("ART:") and "ref:" not in body:
+        print("ART: 请求必须带 ref:<参考图路径>（1–3 张，作为生图的图像输入；见 AGENTS.md）", file=sys.stderr)
+        return 2
     refs = [item.strip() for item in (args.refs or "").split(",") if item.strip()]
     with bus_lock(args.root):
         entry = {
