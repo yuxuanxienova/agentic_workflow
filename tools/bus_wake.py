@@ -531,10 +531,18 @@ def cmd_list(args) -> int:
 
 def cmd_spawn(args) -> int:
     server = AppServer()
-    thread = server.call("thread/start", {"cwd": str(Path(args.cwd).resolve()), **FULL_ACCESS})["thread"]
+    start_params = {"cwd": str(Path(args.cwd).resolve()), **FULL_ACCESS}
+    if args.model:
+        start_params["model"] = args.model
+    thread = server.call("thread/start", start_params)["thread"]
     thread_id = thread["id"]
     server.call("thread/name/set", {"threadId": thread_id, "name": args.name})
-    server.call("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": args.text}], **TURN_FULL_ACCESS})
+    turn_params = {"threadId": thread_id, "input": [{"type": "text", "text": args.text}], **TURN_FULL_ACCESS}
+    if args.model:
+        turn_params["model"] = args.model
+    if args.effort:
+        turn_params["effort"] = args.effort
+    server.call("turn/start", turn_params)
     mapping = load_json(bus_dir(args.root) / MAP_NAME)
     mapping[args.agent] = thread_id
     save_json(bus_dir(args.root) / MAP_NAME, mapping)
@@ -722,6 +730,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", required=True, help="会话名（App 侧栏显示）")
     p.add_argument("--text", required=True, help="首轮提示")
     p.add_argument("--cwd", default=".", help="会话工作目录（默认当前目录）")
+    p.add_argument("--model", default=None, help="新会话使用的模型")
+    p.add_argument("--effort", choices=("minimal", "low", "medium", "high", "xhigh"), default=None,
+                   help="新会话的推理强度")
     p.add_argument("--follow", action="store_true", help="等待首轮结束并打印输出")
     p.set_defaults(func=cmd_spawn)
 
